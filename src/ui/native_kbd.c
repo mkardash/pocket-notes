@@ -25,9 +25,10 @@ static void log_line(const char *fmt, ...) {
     fclose(f);
 }
 
+/* The log records sizes and positions only, never the text itself (notes can be private). */
 static void on_change(void *ctx, const char *commit, const char *before, int replace_from, int replace_length) {
-    log_line("change commit='%s' before='%s' replace_from=%d replace_length=%d",
-             commit ? commit : "(null)", before ? before : "(null)", replace_from, replace_length);
+    log_line("change commit_bytes=%d before_bytes=%d replace_from=%d replace_length=%d",
+             commit ? (int)strlen(commit) : -1, before ? (int)strlen(before) : -1, replace_from, replace_length);
     streamed = 1;
     /* Best guess until the log shows otherwise: replace_length characters before the cursor
      * are replaced by the committed text (how word suggestions usually work). */
@@ -36,7 +37,7 @@ static void on_change(void *ctx, const char *commit, const char *before, int rep
 }
 
 static void on_close(char *text) {
-    log_line("closed text='%s' streamed=%d", text ? text : "(null)", streamed);
+    log_line("closed text_bytes=%d streamed=%d", text ? (int)strlen(text) : -1, streamed);
     setKeyboardTextChangeCallback(NULL, NULL);
     open_now = 0;
     if (!streamed && text && *text && ops.insert) ops.insert(text);
@@ -48,7 +49,7 @@ void native_kbd_open(const char *title, NativeKbdOps o) {
     streamed = 0;
     buffer[0] = 0;
     open_now = 1;
-    log_line("open title='%s'", title ? title : "");
+    log_line("open");
     setKeyboardTextChangeCallback(on_change, NULL);
     OpenKeyboard(title, buffer, sizeof buffer - 1, KBD_NORMAL, on_close);
 }

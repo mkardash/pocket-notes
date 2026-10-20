@@ -131,8 +131,8 @@ docker run --rm -v pbsdk:/sdk -v "$PWD:/dl" pocketnotes-build sh -c 'cd /sdk && 
   to third-party apps. PocketNotes listens for the firmware's extended key events, and reads the
   input devices directly when it is allowed to.
 - **PocketBook keyboard:** this option uses the system keyboard window; typed text is inserted
-  when you tap OK. Live typing through the system keyboard is experimental, and its events are
-  logged to `pocketnotes-keyboard.log` on the device.
+  when you tap OK. Live typing through the system keyboard is experimental. Its events are
+  logged to `pocketnotes-keyboard.log` on the device as sizes and positions only, never the text.
 - **Not yet available:** syncing (copy files over USB for now), undo, and copy/paste.
 
 ## License

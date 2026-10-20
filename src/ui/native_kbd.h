@@ -1,7 +1,7 @@
 /* PocketBook's own keyboard (InkView OpenKeyboard).
  * The documented mode returns the typed text when the keyboard closes. The keyboard can also
  * report text as it is typed (setKeyboardTextChangeCallback, undocumented); every callback is
- * logged so its behaviour on a real device can be studied. */
+ * logged (sizes and positions only, never the text) so its behaviour can be studied on a device. */
 #ifndef NATIVE_KBD_H
 #define NATIVE_KBD_H
 
