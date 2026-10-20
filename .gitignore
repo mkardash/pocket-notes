@@ -1,0 +1,11 @@
+# Build output
+build/
+*.o
+
+# Large downloads (re-fetch with the commands in README.md)
+third_party/sdk-download/
+third_party/icon-download/
+
+# OS clutter
+.DS_Store
+._*

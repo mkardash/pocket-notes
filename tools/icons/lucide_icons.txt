@@ -1,0 +1,26 @@
+# app icon id, Lucide glyph name, codepoint in third_party/lucide/lucide.ttf
+BACK chevron-left e06e
+CLOSE x e1b2
+PLUS plus e13d
+BULB lightbulb e1c2
+TEXT a-large-small e587
+KEYBOARD keyboard e284
+DOTS ellipsis-vertical e0b7
+FOLDER folder e0d7
+DOC file-text e0cc
+LEFT arrow-left e048
+RIGHT arrow-right e049
+UP arrow-up e04a
+DOWN arrow-down e042
+SHIFT arrow-big-up e1e4
+SHIFT_LOCK arrow-big-up-dash e420
+BACKSPACE delete e0ae
+ENTER corner-down-left e0a1
+HIDE arrow-down-to-line e455
+CHEVRON_DOWN chevron-down e06d
+CHEVRON_RIGHT chevron-right e06f
+BOOK notebook e595
+SETTINGS sliders-horizontal e29a
+FORMAT bold e05d
+ZEN maximize-2 e113
+ZEN_EXIT minimize-2 e11b
