@@ -13,7 +13,6 @@
 #define APP_SETTINGS "/mnt/ext1/system/config/pocketnotes.cfg"
 #endif
 #define OLD_ROOT "/mnt/ext1/Writing"          /* folder used by the first test builds */
-#define KEYBOARD_LOG "/mnt/ext1/pocketnotes-keyboard.log"
 
 Settings g_settings;
 char g_root[1024] = APP_ROOT;
@@ -26,16 +25,6 @@ int g_header_h, g_row_h, g_margin;
 static Screen *current = NULL;
 static int pending_redraw = -1;     /* -1 none, else UPD_* */
 static int switches_since_full = 0;
-
-const char *app_keyboard_log_path(void) {
-#ifdef HOST_SIM
-    static char p[1100];
-    snprintf(p, sizeof p, "%s/../keyboard.log", g_root);
-    return p;
-#else
-    return KEYBOARD_LOG;
-#endif
-}
 
 long long app_now_ms(void) {
 #ifdef HOST_SIM

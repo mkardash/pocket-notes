@@ -50,7 +50,6 @@ void app_save_settings(void);
 void app_reopen_text_font(void);
 void app_exit(void);
 long long app_now_ms(void);
-const char *app_keyboard_log_path(void);
 
 /* ---- draw.c ---- */
 int text_width(ifont *f, const char *s);

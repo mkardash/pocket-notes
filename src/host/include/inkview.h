@@ -109,12 +109,6 @@ void ClearTimer(iv_timerproc tproc);
 const char *currentLang();
 void SetPanelType(int type);
 
-#define KBD_NORMAL 0
-typedef void (*iv_keyboardhandler)(char *text);
-typedef void (*keyboard_text_change_callback)(void *context, const char *commit_string, const char *text_before,
-                                              int replace_from, int replace_length);
-void OpenKeyboard(const char *title, char *buffer, int maxlen, int flags, iv_keyboardhandler hproc);
-void setKeyboardTextChangeCallback(keyboard_text_change_callback cb, void *context);
 void SetOrientation(int n);
 int GetBatteryPower();
 

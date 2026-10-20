@@ -8,6 +8,5 @@ void sim_advance(int ms);
 long long sim_now(void);
 void sim_set_lang(const char *lang);
 int sim_save_png(const char *path);
-void sim_native_keyboard(const char *text, int streamed);
 
 #endif

@@ -231,22 +231,10 @@ int main(int argc, char **argv) {
     shot("09-ukrainian-typing");
     chord(KC_LEFTCTRL, KC_SPACE);
 
-    printf("6. Settings: PocketBook keyboard, language\n");
+    printf("6. Settings: language\n");
     tap_slot(1);
     shot("10-settings");
-    tap_menu("Keyboard: built-in");
-    tap_slot(0);                        /* opens the PocketBook keyboard */
-    sim_native_keyboard(" Typed on the PocketBook keyboard.", 0);
-    tap_slot(0);
-    sim_native_keyboard(" Streamed text.", 1);
-    sim_advance(5000);
-    note = read_rel("The Grey City/01 Chapter 1/01 Scene 1.md");
-    expect(note && strstr(note, "Typed on the PocketBook keyboard.") && strstr(note, "Streamed text."),
-           "PocketBook keyboard text inserted (on OK and streamed)");
-    expect(note && !strstr(note, "Streamed text. Streamed text."), "streamed text not inserted twice");
-    free(note);
-    tap_slot(1);
-    tap_menu("Keyboard: PocketBook");
+    tap_menu("Refresh screen");
     tap_slot(1);
     tap_menu("Language: English");
     shot("11-ukrainian-interface");

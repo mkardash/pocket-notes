@@ -254,27 +254,3 @@ void InkViewMain(iv_handler h) { (void)h; }
 int sim_save_png(const char *path) {
     return stbi_write_png(path, W, H, 1, fb, W) ? 0 : -1;
 }
-
-/* ---- PocketBook keyboard (driven by the simulator) ---- */
-static iv_keyboardhandler kbd_handler = NULL;
-static keyboard_text_change_callback kbd_change = NULL;
-static void *kbd_ctx = NULL;
-static char *kbd_buffer = NULL;
-static int kbd_max = 0;
-
-void OpenKeyboard(const char *title, char *buffer, int maxlen, int flags, iv_keyboardhandler hproc) {
-    kbd_handler = hproc;
-    kbd_buffer = buffer;
-    kbd_max = maxlen;
-}
-void setKeyboardTextChangeCallback(keyboard_text_change_callback cb, void *context) { kbd_change = cb; kbd_ctx = context; }
-
-/* Pretends the user typed `text` (streamed=1: reported as it is typed) and pressed OK. */
-void sim_native_keyboard(const char *text, int streamed) {
-    if (!kbd_handler) return;
-    if (streamed && kbd_change) kbd_change(kbd_ctx, text, "", 0, 0);
-    snprintf(kbd_buffer, kbd_max, "%s", text);
-    iv_keyboardhandler h = kbd_handler;
-    kbd_handler = NULL;
-    h(kbd_buffer);
-}

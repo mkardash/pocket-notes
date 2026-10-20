@@ -36,8 +36,6 @@ files in ordinary folders, so you can open them on any computer.
   - English, Ukrainian and symbol layouts;
   - capitals at the start of sentences;
   - cursor keys, and Backspace that repeats while held.
-
-  You can switch to PocketBook's own keyboard in Settings.
 - **Physical keyboards:** supported when the device firmware passes key presses to apps (see
   *Limitations*).
 - **Safe by design:**
@@ -122,7 +120,7 @@ docker run --rm -v pbsdk:/sdk -v "$PWD:/dl" pocketnotes-build sh -c 'cd /sdk && 
 - `src/core/`: platform-independent logic, covered by `tests/`. Includes the text document,
   line wrapping, Markdown parsing, project folders, file saving, keyboard layouts and settings.
 - `src/ui/`: screens on PocketBook's InkView toolkit: projects, project outline, editor,
-  pop-ups, the on-screen keyboard, and the PocketBook keyboard bridge.
+  pop-ups and the on-screen keyboard.
 - `src/host/`: a stand-in for InkView on the desktop, used by the simulator.
 
 ## Limitations
@@ -130,9 +128,6 @@ docker run --rm -v pbsdk:/sdk -v "$PWD:/dl" pocketnotes-build sh -c 'cd /sdk && 
 - **Physical keyboards:** stock PocketBook firmware may not pass Bluetooth or USB keyboard input
   to third-party apps. PocketNotes listens for the firmware's extended key events, and reads the
   input devices directly when it is allowed to.
-- **PocketBook keyboard:** this option uses the system keyboard window; typed text is inserted
-  when you tap OK. Live typing through the system keyboard is experimental. Its events are
-  logged to `pocketnotes-keyboard.log` on the device as sizes and positions only, never the text.
 - **Not yet available:** syncing (copy files over USB for now), undo, and copy/paste.
 
 ## License

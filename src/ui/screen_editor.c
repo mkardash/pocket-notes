@@ -3,7 +3,6 @@
  * typing pauses. Lines can differ in height (headings), so positions are found by walking lines. */
 #include "app.h"
 #include "osk.h"
-#include "native_kbd.h"
 #include "../core/book.h"
 #include "../core/doc.h"
 #include "../core/layout.h"
@@ -40,7 +39,7 @@ static int in_code_cap = 0;
 /* ---------- geometry ---------- */
 
 static int zen(void) { return g_settings.zen; }
-static int own_kb(void) { return kb_visible && !g_settings.native_keyboard; }
+static int own_kb(void) { return kb_visible; }
 static int zen_bar(void) { return g_header_h * 6 / 10; }
 static int status_h(void) { return zen() ? 0 : f_small->height + 24; }
 static int kb_top(void) { return own_kb() ? SH - osk_height() : SH; }
@@ -475,7 +474,7 @@ static void after_input(void) {
 }
 
 static void clean_refresh(void) {
-    if (!needs_clean || popup_active() || native_kbd_is_open()) return;
+    if (!needs_clean || popup_active()) return;
     needs_clean = 0;
     draw_status();
     int top = zen() ? 0 : g_header_h;
@@ -540,7 +539,6 @@ static void edit_end(EditMark m) {
     int fences = compute_fences();
     if (m.before.p >= doc->n) { m.before.p = doc->n - 1; m.before.l = 0; }
     if (m.before.l >= lay(m.before.p)->n) m.before.l = lay(m.before.p)->n - 1;
-    if (native_kbd_is_open()) { ensure_cursor_visible(); return; }
     if (fences || ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     Lay *l = lay(doc->cp);
     int to_bottom = doc->n != m.n0 || l->n != m.lines0 || l->lh != m.lh0 || (int)l->ps.type != m.type0;
@@ -880,27 +878,10 @@ static int save_now(void) {
 }
 
 static void autosave(void) {
-    if (popup_active() || native_kbd_is_open()) { SetHardTimer("pn_autosave", autosave, AUTOSAVE_MS); return; }
+    if (popup_active()) { SetHardTimer("pn_autosave", autosave, AUTOSAVE_MS); return; }
     save_now();
     if (!zen()) { draw_status(); app_update(status_rect(), UPD_FAST); }
     app_flush();
-}
-
-/* ---------- PocketBook keyboard ---------- */
-
-static void native_insert(const char *text) { doc_insert(doc, text, (int)strlen(text)); mark_edited(); }
-static void native_erase(int chars) { for (int i = 0; i < chars; i++) doc_backspace(doc); mark_edited(); }
-static void native_closed(void) {
-    compute_fences();
-    ensure_cursor_visible();
-    app_redraw(UPD_PARTIAL);
-    app_flush();
-}
-
-static void open_native_keyboard(void) {
-    save_now();
-    NativeKbdOps ops = { native_insert, native_erase, native_closed };
-    native_kbd_open(e_title, ops);
 }
 
 /* ---------- screen callbacks ---------- */
@@ -916,7 +897,6 @@ static void apply_view_change(void) {
 }
 
 static void toggle_keyboard(void) {
-    if (g_settings.native_keyboard) { open_native_keyboard(); return; }
     kb_visible = !kb_visible;
     g_settings.keyboard_visible = kb_visible;
     apply_view_change();
@@ -1021,7 +1001,7 @@ static void cycle_font(void) {
     change_font_size(0);
 }
 
-enum { SET_LARGER, SET_SMALLER, SET_FONT, SET_INDENT, SET_KEYBOARD, SET_LANGUAGE, SET_REFRESH };
+enum { SET_LARGER, SET_SMALLER, SET_FONT, SET_INDENT, SET_LANGUAGE, SET_REFRESH };
 
 static void settings_chosen(int idx, void *ctx) {
     switch (idx) {
@@ -1029,7 +1009,6 @@ static void settings_chosen(int idx, void *ctx) {
     case SET_SMALLER: change_font_size(-4); break;
     case SET_FONT: cycle_font(); break;
     case SET_INDENT: g_settings.indent = !g_settings.indent; apply_view_change(); break;
-    case SET_KEYBOARD: g_settings.native_keyboard = !g_settings.native_keyboard; apply_view_change(); break;
     case SET_LANGUAGE:
         g_settings.ui_lang = !g_settings.ui_lang;
         i18n_set(g_settings.ui_lang);
@@ -1045,10 +1024,9 @@ static void open_settings_menu(void) {
     const char *items[] = {
         T(S_LARGER), T(S_SMALLER), font_item,
         T(g_settings.indent ? S_INDENT_ON : S_INDENT_OFF),
-        T(g_settings.native_keyboard ? S_KEYBOARD_NATIVE : S_KEYBOARD_OWN),
         T(S_UI_LANGUAGE), T(S_REFRESH),
     };
-    popup_menu(T(S_SETTINGS), items, 7, settings_chosen, NULL);
+    popup_menu(T(S_SETTINGS), items, 6, settings_chosen, NULL);
 }
 
 static void run_osk_key(int k);
