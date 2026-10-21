@@ -29,7 +29,6 @@ files in ordinary folders, so you can open them on any computer.
   - code blocks, quotes (nested too), dividers;
   - bulleted, numbered and nested lists, plus task lists you tick with a tap;
   - links, images (shown as their caption), tables (columns aligned).
-
 - **Two views:** *Formatted* is the default. The note looks like a word-processor page and shows
   no Markdown symbols. Typing works like Word: bold and other styles carry on across spaces,
   `---` makes a divider, `` ``` `` makes a code block, and Backspace at the start of a heading or list
@@ -41,7 +40,7 @@ files in ordinary folders, so you can open them on any computer.
 - **Formatting menu:** applies any of the above to the current line or word. With no word
   selected, choosing a style turns it on for what you type next. Enter continues a list, and
   Enter on an empty item ends it.
-- **Zen mode:** just your text, with no toolbars and no formatting (plain text, as in Source view). One tap in and one tap out.
+- **Zen mode:** just your text, with no toolbars and no formatting. One tap in and one tap out.
 - **Quick notes:** the 💡 button saves a thought straight into the project's `Ideas` folder.
 - **On-screen keyboard** built for e-ink:
   - several keyboard languages (choose yours in Settings), plus symbols;
