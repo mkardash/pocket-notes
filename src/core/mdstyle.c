@@ -7,7 +7,7 @@ static int is_space(char c) { return c == ' ' || c == '\t'; }
 static int is_word_char(unsigned char c) {
     return (c >= '0' && c <= '9') || ((c | 32) >= 'a' && (c | 32) <= 'z') || c >= 0x80;
 }
-static int is_punct(char c) { return c && strchr("\\`*_{}[]()#+-.!|~=<>\"'", c) != NULL; }
+int md_is_escapable(char c) { return c && strchr("\\`*_{}[]()#+-.!|~=<>\"'", c) != NULL; }
 
 int md_indent(const char *s, int len) {
     int i = 0;
@@ -197,7 +197,7 @@ void md_parse(const char *s, int len, int in_code, ParaStyle *out) {
 
     /* Escapes: \* etc. — the backslash is markup, the next character is literal. */
     for (int i = from; i + 1 < len; i++) {
-        if (s[i] == '\\' && is_punct(s[i + 1])) { st[i] |= ST_MARK; st[i + 1] |= ST_LITERAL; i++; }
+        if (s[i] == '\\' && md_is_escapable(s[i + 1])) { st[i] |= ST_MARK; st[i + 1] |= ST_LITERAL; i++; }
     }
     /* `code` spans: nothing inside is formatted. */
     for (int i = from; i < len; i++) {

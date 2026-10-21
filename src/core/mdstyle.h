@@ -36,6 +36,9 @@ int md_is_fence(const char *s, int len);
 void md_parse(const char *s, int len, int in_code, ParaStyle *out);
 void md_free(ParaStyle *ps);
 
+/* Is c a punctuation character that a backslash can escape? */
+int md_is_escapable(char c);
+
 /* Block prefixes used by the format menu. */
 typedef enum { FMT_NORMAL, FMT_H1, FMT_H2, FMT_H3, FMT_BULLET, FMT_NUMBER, FMT_TODO, FMT_QUOTE } BlockFormat;
 /* Prefix text for a block format, keeping the list nesting `indent` (in spaces). */

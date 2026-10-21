@@ -32,6 +32,12 @@ void doc_left(Doc *d);
 void doc_right(Doc *d);
 /* Moves the cursor, clamped to valid positions and character boundaries. */
 void doc_set_cursor(Doc *d, int para, int off);
+/* Replaces the text of paragraph i. */
+void doc_set_para(Doc *d, int i, const char *s, int len);
+/* Inserts a paragraph before index i (i == n appends); the cursor stays on its paragraph. */
+void doc_insert_para(Doc *d, int i, const char *s, int len);
+/* Removes paragraph i (no-op for the last one left); the cursor stays valid. */
+void doc_delete_para(Doc *d, int i);
 int doc_word_count(const Doc *d);
 
 #endif

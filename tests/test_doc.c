@@ -1,6 +1,7 @@
 #include "test.h"
 #include "../src/core/doc.h"
 #include "../src/core/utf8.h"
+#include "../src/core/settings.h"
 #include <stdlib.h>
 
 static char *text_of(Doc *d) { return doc_text(d, NULL); }
@@ -143,6 +144,51 @@ static void test_gen_changes(void) {
     doc_free(d);
 }
 
+/* Text of a document in a static buffer, valid until the next call. */
+static const char *txt(Doc *d) {
+    static char buf[256];
+    char *t = doc_text(d, NULL);
+    snprintf(buf, sizeof buf, "%s", t);
+    free(t);
+    return buf;
+}
+
+static void test_paragraph_ops(void) {
+    Doc *d = doc_from_text("a\nb\nc", 5);
+    doc_set_cursor(d, 2, 1);
+    doc_insert_para(d, 1, "x", 1);
+    CHECK_STR(txt(d), "a\nx\nb\nc");
+    CHECK_INT(d->cp, 3);
+    doc_set_para(d, 1, "yy", 2);
+    CHECK_STR(txt(d), "a\nyy\nb\nc");
+    CHECK(d->modified);
+    doc_delete_para(d, 1);
+    CHECK_STR(txt(d), "a\nb\nc");
+    CHECK_INT(d->cp, 2);
+    doc_set_cursor(d, 1, 1);
+    doc_delete_para(d, 1);
+    CHECK_INT(d->cp, 0);
+    CHECK_INT(d->co, 1);
+    doc_free(d);
+    Doc *one = doc_from_text("z", 1);
+    doc_delete_para(one, 0);
+    CHECK_INT(one->n, 1);
+    doc_free(one);
+}
+
+static void test_settings_source_view(void) {
+    Settings s;
+    settings_defaults(&s);
+    CHECK_INT(s.source_view, 0);
+    s.source_view = 1;
+    CHECK_INT(settings_save(&s, "build/test_settings.txt"), 0);
+    Settings t;
+    settings_defaults(&t);
+    settings_load(&t, "build/test_settings.txt");
+    CHECK_INT(t.source_view, 1);
+    remove("build/test_settings.txt");
+}
+
 void test_doc_all(void) {
     RUN(test_utf8);
     RUN(test_roundtrip);
@@ -151,4 +197,6 @@ void test_doc_all(void) {
     RUN(test_cursor_moves);
     RUN(test_word_count);
     RUN(test_gen_changes);
+    RUN(test_paragraph_ops);
+    RUN(test_settings_source_view);
 }

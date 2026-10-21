@@ -9,6 +9,7 @@ typedef struct {
     int keyboard_visible;   /* on-screen keyboard shown in the editor */
     int zen;                /* distraction-free view: plain text, no toolbars */
     int indent;             /* first-line indent for prose paragraphs */
+    int source_view;        /* show raw Markdown instead of the formatted view */
     int ui_lang;            /* interface language: 0 English, 1 Ukrainian */
     char last_book[1024];   /* book folder open last time */
     char last_doc[1024];    /* document open last time (empty if none) */

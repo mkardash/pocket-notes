@@ -50,6 +50,32 @@ static void remove_para(Doc *d, int i) {
     memset(&d->p[d->n], 0, sizeof(Para));
 }
 
+void doc_set_para(Doc *d, int i, const char *s, int len) {
+    if (i < 0 || i >= d->n) return;
+    para_set(&d->p[i], s, len);
+    touch(d, &d->p[i]);
+    if (d->cp == i && d->co > len) d->co = len;
+}
+
+void doc_insert_para(Doc *d, int i, const char *s, int len) {
+    if (i < 0) i = 0;
+    if (i > d->n) i = d->n;
+    para_set(insert_para(d, i), s, len);
+    d->modified = 1;
+    if (i <= d->cp) d->cp++;
+}
+
+void doc_delete_para(Doc *d, int i) {
+    if (d->n <= 1 || i < 0 || i >= d->n) return;
+    remove_para(d, i);
+    d->modified = 1;
+    if (i < d->cp) d->cp--;
+    else if (i == d->cp) {
+        if (i > 0) { d->cp = i - 1; d->co = d->p[d->cp].len; }
+        else d->co = 0;
+    }
+}
+
 Doc *doc_from_text(const char *text, int len) {
     Doc *d = calloc(1, sizeof(Doc));
     if (len >= 3 && memcmp(text, "\xEF\xBB\xBF", 3) == 0) { text += 3; len -= 3; }

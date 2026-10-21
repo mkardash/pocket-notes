@@ -114,11 +114,17 @@ static void test_prefix(void) {
     CHECK_STR(p, "");
 }
 
+static void test_escapable(void) {
+    CHECK(md_is_escapable('*'));
+    CHECK(!md_is_escapable('a'));
+}
+
 void test_md_all(void) {
     RUN(test_blocks);
     RUN(test_code);
     RUN(test_inline);
     RUN(test_links);
     RUN(test_prefix);
+    RUN(test_escapable);
     md_free(&ps);
 }
