@@ -6,6 +6,7 @@ typedef struct {
     int font_size;          /* editor text size in pixels */
     char font_name[128];    /* editor font; empty = automatic */
     int layout;             /* KbLayout of the keyboard */
+    unsigned layouts;       /* bit mask of KbLayouts offered when cycling */
     int keyboard_visible;   /* on-screen keyboard shown in the editor */
     int zen;                /* distraction-free view: plain text, no toolbars */
     int indent;             /* first-line indent for prose paragraphs */

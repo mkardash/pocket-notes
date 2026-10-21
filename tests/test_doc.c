@@ -2,6 +2,7 @@
 #include "../src/core/doc.h"
 #include "../src/core/utf8.h"
 #include "../src/core/settings.h"
+#include "../src/core/keys.h"
 #include <stdlib.h>
 
 static char *text_of(Doc *d) { return doc_text(d, NULL); }
@@ -189,6 +190,36 @@ static void test_settings_source_view(void) {
     remove("build/test_settings.txt");
 }
 
+static void test_settings_layouts(void) {
+    Settings s, t;
+    settings_defaults(&s);
+    CHECK_INT(s.layout, LAYOUT_EN);
+    CHECK_INT(s.layouts, LAYOUTS_DEFAULT);
+    s.layout = LAYOUT_PL;
+    s.layouts = LAYOUTS_DEFAULT | (1u << LAYOUT_DE) | (1u << LAYOUT_PL);
+    CHECK_INT(settings_save(&s, "build/test_settings.txt"), 0);
+    settings_defaults(&t);
+    settings_load(&t, "build/test_settings.txt");
+    CHECK_INT(t.layout, LAYOUT_PL);
+    CHECK_INT(t.layouts, s.layouts);
+    FILE *f = fopen("build/test_settings.txt", "w");
+    fputs("layout=99\nlayouts=0\n", f); fclose(f);
+    settings_defaults(&t); t.layout = LAYOUT_DE;
+    settings_load(&t, "build/test_settings.txt");
+    CHECK_INT(t.layout, LAYOUT_EN);
+    CHECK_INT(t.layouts, LAYOUTS_DEFAULT);
+    f = fopen("build/test_settings.txt", "w");
+    fputs("layout=6\nlayouts=3\n", f); fclose(f);
+    settings_load(&t, "build/test_settings.txt");
+    CHECK_INT(t.layout, LAYOUT_RU);
+    CHECK_INT(t.layouts, 3u | (1u << LAYOUT_RU));
+    f = fopen("build/test_settings.txt", "w");
+    fputs("layouts=9999999\nlayout=0\n", f); fclose(f);
+    settings_load(&t, "build/test_settings.txt");
+    CHECK_INT(t.layouts, (1u << LAYOUT_COUNT) - 1);
+    remove("build/test_settings.txt");
+}
+
 void test_doc_all(void) {
     RUN(test_utf8);
     RUN(test_roundtrip);
@@ -199,4 +230,5 @@ void test_doc_all(void) {
     RUN(test_gen_changes);
     RUN(test_paragraph_ops);
     RUN(test_settings_source_view);
+    RUN(test_settings_layouts);
 }

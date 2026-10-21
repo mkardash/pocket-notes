@@ -2,7 +2,18 @@
 #ifndef KEYS_H
 #define KEYS_H
 
-typedef enum { LAYOUT_UK = 0, LAYOUT_EN = 1, LAYOUT_COUNT = 2 } KbLayout;
+typedef enum { LAYOUT_UK = 0, LAYOUT_EN = 1, LAYOUT_DE = 2, LAYOUT_FR = 3, LAYOUT_ES = 4,
+               LAYOUT_PL = 5, LAYOUT_RU = 6, LAYOUT_COUNT = 7 } KbLayout;   /* values are saved: never renumber */
+#define LAYOUTS_DEFAULT ((1u << LAYOUT_UK) | (1u << LAYOUT_EN))
+
+const char *keys_layout_short(KbLayout l);   /* "УКР" "ENG" "DEU" "FRA" "ESP" "POL" "РУС" */
+const char *keys_layout_name(KbLayout l);    /* the language's own name */
+int keys_layout_cyrillic(KbLayout l);        /* UK, RU -> 1 */
+/* Next layout after cur in enum order (wrapping) whose bit is set in mask; cur if none. */
+KbLayout keys_next_layout(KbLayout cur, unsigned mask);
+/* Accented variants of a letter: fills out[] with up to max UTF-8 strings (static storage),
+   returns the count. base is the key's text as typed (lower or upper case); variants keep its case. */
+int keys_variants(const char *base, const char **out, int max);
 
 /* Linux input key codes used for editing (from linux/input-event-codes.h). */
 enum {
@@ -36,7 +47,8 @@ typedef struct {
 typedef struct { const OskKey *keys; int n; } OskRow;
 typedef struct { const OskRow *rows; int nrows; } OskLayout;
 
-enum { OSK_PAGE_UK = 0, OSK_PAGE_EN = 1, OSK_PAGE_SYMBOLS = 2 };
+/* Pages 0..LAYOUT_COUNT-1 are the letters page of that layout; symbols follow. */
+enum { OSK_PAGE_UK = LAYOUT_UK, OSK_PAGE_EN = LAYOUT_EN, OSK_PAGE_SYMBOLS = LAYOUT_COUNT };
 const OskLayout *keys_osk_page(int page);
 
 #endif
