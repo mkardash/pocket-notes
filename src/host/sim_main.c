@@ -18,6 +18,7 @@ Osk *editor_sim_osk(void);
 Doc *editor_sim_doc(void);
 int editor_sim_checkbox_point(int p, int *x, int *y);
 int editor_sim_drawn_markup(void);
+int editor_sim_cursor_ok(void);
 
 static char out_dir[512], root[600], cfg[600];
 const char *sim_root(void) { return root; }
@@ -288,6 +289,55 @@ int main(int argc, char **argv) {
     char *settings = storage_read(cfg, NULL);
     expect(settings && strstr(settings, "Scene 1.md"), "last note remembered");
     free(settings);
+
+    printf("9b. Formatted view cursor never rests on hidden symbols\n");
+    {
+        Doc *d = editor_sim_doc();
+        char *cfgtxt = storage_read(cfg, NULL);
+        if (cfgtxt && strstr(cfgtxt, "keyboard_visible=1")) tap_slot(0);   /* keyboard hidden */
+        free(cfgtxt);
+        for (int i = 0; i < 30; i++) key(KC_PAGEUP);
+        int bad = 0, steps = 0;
+        int pp = d->cp, po = d->co;
+        for (int i = 0; i < 400 && !bad; i++) {
+            key(KC_UP);
+            if (!editor_sim_cursor_ok()) { bad = 1; printf("    cursor on hidden text at paragraph %d offset %d (Up)\n", d->cp, d->co); }
+            if (d->cp == pp && d->co == po) break;
+            pp = d->cp; po = d->co;
+        }
+        key(KC_HOME);
+        if (!bad && !editor_sim_cursor_ok()) { bad = 1; printf("    cursor on hidden text at paragraph %d offset %d (Home)\n", d->cp, d->co); }
+        pp = d->cp; po = d->co;
+        for (int i = 0; i < 400 && !bad; i++) {
+            key(KC_RIGHT);
+            if (!editor_sim_cursor_ok()) { bad = 1; printf("    cursor on hidden text at paragraph %d offset %d\n", d->cp, d->co); break; }
+            if (d->cp == pp && d->co == po) break;
+            if (d->cp < pp || (d->cp == pp && d->co < po)) { bad = 1; printf("    cursor went back to paragraph %d offset %d\n", d->cp, d->co); break; }
+            pp = d->cp; po = d->co;
+            steps++;
+        }
+        expect(!bad && steps > 20, "Right walks the whole note without resting on hidden bytes");
+        tap_slot(5);                    /* quick note */
+        tap_slot(3);                    /* Source view */
+        type_physical("text\n---", LAYOUT_EN);
+        tap_slot(3);                    /* Formatted view */
+        key(KC_END);
+        key(KC_DOWN);
+        sim_advance(5000);
+        char *saved = NULL;
+        {
+            char lcmd[1400], path[1400] = "";
+            snprintf(lcmd, sizeof lcmd, "ls -t '%s/The Grey City/Ideas'/*.md | head -1", root);
+            FILE *f = popen(lcmd, "r");
+            if (f && fgets(path, sizeof path, f)) { path[strcspn(path, "\n")] = 0; saved = storage_read(path, NULL); }
+            if (f) pclose(f);
+        }
+        size_t sl = saved ? strlen(saved) : 0;
+        expect(saved && sl >= 9 && !strcmp(saved + sl - 9, "text\n---\n"), "Down below a trailing divider appends an empty paragraph");
+        expect(editor_sim_cursor_ok(), "cursor is valid after the append");
+        free(saved);
+        tap_back();
+    }
 
     printf("\nScreen updates sent: %d\n", sim_update_count);
     printf("%s\n", fails ? "SIM CHECKS FAILED" : "All sim checks passed");

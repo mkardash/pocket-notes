@@ -556,6 +556,8 @@ static void mark_edited(void) {
     SetHardTimer("pn_autosave", autosave, AUTOSAVE_MS);
 }
 
+static void normalize_cursor(void);
+
 typedef struct { Pos before; int n0, lines0, lh0, type0; } EditMark;
 
 static EditMark edit_begin(void) {
@@ -576,6 +578,7 @@ static void edit_end(EditMark m) {
     pref_x = -1;
     mark_edited();
     int fences = compute_fences();
+    normalize_cursor();
     if (m.before.p >= doc->n) { m.before.p = doc->n - 1; m.before.l = 0; }
     if (m.before.l >= lay(m.before.p)->n) m.before.l = lay(m.before.p)->n - 1;
     if (fences || ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
@@ -607,9 +610,47 @@ static void replace_range(int p, int from, int to, const char *text) {
     doc_insert(doc, text, (int)strlen(text));
 }
 
+static int para_hidden(int p) { return fmt() && fv_para_hidden(&lay(p)->ps); }
+
+/* Next / previous paragraph that is not hidden in Formatted view, or -1. */
+static int visible_after(int p) {
+    for (p++; p < doc->n; p++) if (!para_hidden(p)) return p;
+    return -1;
+}
+
+static int visible_before(int p) {
+    for (p--; p >= 0; p--) if (!para_hidden(p)) return p;
+    return -1;
+}
+
+/* Adds an empty paragraph at the end and puts the cursor in it. */
+static void append_empty_para(void) {
+    doc_insert_para(doc, doc->n, "", 0);
+    compute_fences();
+    doc_set_cursor(doc, doc->n - 1, 0);
+    mark_edited();
+}
+
+/* Formatted view: the cursor never rests in a hidden paragraph or on hidden bytes. */
+static void normalize_cursor(void) {
+    if (!fmt()) return;
+    if (para_hidden(doc->cp)) {
+        int q = visible_after(doc->cp);
+        if (q >= 0) doc_set_cursor(doc, q, fv_content_start(&lay(q)->ps));
+        else if ((q = visible_before(doc->cp)) >= 0) doc_set_cursor(doc, q, doc->p[q].len);
+        else append_empty_para();
+    }
+    Lay *l = lay(doc->cp);
+    Para *p = &doc->p[doc->cp];
+    doc_set_cursor(doc, doc->cp, fv_snap(p->s, p->len, &l->ps, l->hid, doc->co));
+}
+
 static void move_cursor_to(int p, int o) {
     Pos old = cursor_pos();
+    int n0 = doc->n;
     doc_set_cursor(doc, p, o);
+    normalize_cursor();
+    if (doc->n != n0) { ensure_cursor_visible(); full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     if (ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     Pos c = cursor_pos();
     Rect a = rect_make(0, 0, 0, 0), b = rect_make(0, 0, 0, 0);
@@ -641,9 +682,23 @@ static int offset_at(Pos a, int screen_x) {
 static void vertical_move(int lines) {
     if (pref_x < 0) pref_x = cursor_screen_x();
     Pos c = cursor_pos();
-    int moved = 0;
-    for (int i = 0; i < (lines < 0 ? -lines : lines); i++) moved += lines < 0 ? pos_prev(&c) : pos_next(&c);
+    int moved = 0, hidden_tail = 0;
+    for (int i = 0; i < (lines < 0 ? -lines : lines); i++) {
+        /* Formatted view skips the lines of hidden paragraphs. */
+        Pos t = c;
+        int ok;
+        while ((ok = lines < 0 ? pos_prev(&t) : pos_next(&t)) && para_hidden(t.p)) {}
+        if (ok) { c = t; moved++; }
+        else if (lines > 0 && para_hidden(doc->n - 1)) hidden_tail = 1;
+    }
     int keep = pref_x, p, o;
+    if (hidden_tail && !moved) {
+        append_empty_para();
+        full_text_redraw(UPD_FAST);
+        update_auto_shift();
+        pref_x = -1;
+        return;
+    }
     if (!moved) {
         if (lines < 0) { p = 0; o = 0; } else { p = doc->n - 1; o = doc->p[p].len; }
     } else {
@@ -659,12 +714,36 @@ static void line_home_end(int end) {
     Lay *l = lay(c.p);
     LineSpan s = l->lines[c.l];
     int o = s.start;
-    if (c.l == 0 && fmt() && !end && doc->co > l->ps.marker_len) o = l->ps.marker_len;  /* skip the marker */
+    if (c.l == 0 && fmt() && !end) o = fv_content_start(&l->ps);  /* skip the marker */
     if (end) {
         o = s.start + s.len;
         if (c.l + 1 < l->n && o > s.start && doc->p[c.p].s[o - 1] == ' ') o--;
     }
     move_cursor_to(c.p, o);
+}
+
+/* Left (-1) / Right (+1). Formatted view steps over visible characters only, and crosses to the
+ * neighbouring visible paragraph. Other views move one character. */
+static void cursor_step(int dir) {
+    pref_x = -1;
+    if (!fmt()) {
+        Doc tmp = *doc;
+        if (dir < 0) doc_left(&tmp); else doc_right(&tmp);
+        move_cursor_to(tmp.cp, tmp.co);
+        return;
+    }
+    Lay *l = lay(doc->cp);
+    Para *p = &doc->p[doc->cp];
+    int o = dir < 0 ? fv_prev(p->s, p->len, &l->ps, l->hid, doc->co) : fv_next(p->s, p->len, &l->ps, l->hid, doc->co);
+    if (o >= 0) { move_cursor_to(doc->cp, o); return; }
+    int q = dir < 0 ? visible_before(doc->cp) : visible_after(doc->cp);
+    if (q >= 0) move_cursor_to(q, dir < 0 ? doc->p[q].len : fv_content_start(&lay(q)->ps));
+    else if (dir > 0 && doc->cp + 1 < doc->n) {     /* only hidden paragraphs follow */
+        append_empty_para();
+        ensure_cursor_visible();
+        full_text_redraw(UPD_FAST);
+        update_auto_shift();
+    }
 }
 
 static void page_scroll(int dir) {
@@ -686,7 +765,7 @@ static void page_scroll(int dir) {
         if (pos_cmp(n, top) == 0 && !pos_prev(&n)) return;
     }
     top_p = n.p; top_l = n.l;
-    if (line_y(cursor_pos()) < 0) doc_set_cursor(doc, n.p, lay(n.p)->lines[n.l].start);
+    if (line_y(cursor_pos()) < 0) { doc_set_cursor(doc, n.p, lay(n.p)->lines[n.l].start); normalize_cursor(); }
     pref_x = -1;
     full_text_redraw(UPD_PARTIAL);
     update_auto_shift();
@@ -927,6 +1006,7 @@ static void autosave(void) {
 static void apply_view_change(void) {
     osk_set_area(&osk, rect_make(0, SH - osk_height(), SW, osk_height()));
     relayout_all();
+    normalize_cursor();
     clamp_top();
     ensure_cursor_visible();
     fill_view();
@@ -971,6 +1051,8 @@ void editor_open(const char *project_dir, const char *doc_path, int para, int of
     book_parse_name(base ? base + 1 : doc_path, 0, &order, e_title, sizeof e_title);
     if (para < 0) { para = doc->n - 1; off = doc->p[para].len; }
     doc_set_cursor(doc, para, off);
+    relayout_all();
+    normalize_cursor();
     backed_up = 0;
     save_failed = 0;
     pref_x = -1;
@@ -985,6 +1067,7 @@ void editor_open(const char *project_dir, const char *doc_path, int para, int of
 
 static void enter(void) {
     relayout_all();
+    normalize_cursor();
     clamp_top();
     /* Open with the cursor a third of the way down. */
     Pos n = back_from(cursor_pos(), text_rect().h / 3);
@@ -1113,6 +1196,17 @@ static void tap_text(int x, int y) {
         if (!pos_next(&a)) break;
     }
     if (!found) a = last;
+    if (!found && fmt() && para_hidden(doc->n - 1)) {
+        Pos e = a;
+        if (!pos_next(&e)) {        /* below the text, with only hidden paragraphs after it */
+            pref_x = -1;
+            append_empty_para();
+            ensure_cursor_visible();
+            full_text_redraw(UPD_FAST);
+            update_auto_shift();
+            return;
+        }
+    }
     Lay *l = lay(a.p);
     /* Tapping a checkbox ticks it. */
     if (fmt() && a.l == 0 && (l->ps.type == BLK_TODO || l->ps.type == BLK_DONE)) {
@@ -1191,8 +1285,8 @@ static void action(Action a) {
     case ACT_BACKSPACE: do_edit_action(doc_backspace); break;
     case ACT_DELETE: do_edit_action(doc_delete_forward); break;
     case ACT_ENTER: do_enter(); break;
-    case ACT_LEFT: { Doc tmp = *doc; doc_left(&tmp); move_cursor_to(tmp.cp, tmp.co); break; }
-    case ACT_RIGHT: { Doc tmp = *doc; doc_right(&tmp); move_cursor_to(tmp.cp, tmp.co); break; }
+    case ACT_LEFT: cursor_step(-1); break;
+    case ACT_RIGHT: cursor_step(1); break;
     case ACT_UP: vertical_move(-1); break;
     case ACT_DOWN: vertical_move(1); break;
     case ACT_HOME: line_home_end(0); break;
@@ -1231,6 +1325,12 @@ Screen screen_editor = { enter, draw, pointer, device_key, text_input, action, l
 #ifdef HOST_SIM
 Osk *editor_sim_osk(void) { return &osk; }
 Doc *editor_sim_doc(void) { return doc; }
+/* In Formatted view the cursor must be on a visible paragraph at a canonical offset. */
+int editor_sim_cursor_ok(void) {
+    if (!fmt()) return 1;
+    Lay *l = lay(doc->cp);
+    return !fv_para_hidden(&l->ps) && fv_snap(doc->p[doc->cp].s, doc->p[doc->cp].len, &l->ps, l->hid, doc->co) == doc->co;
+}
 /* Screen point of a task's checkbox (paragraph p). Returns 0 if not visible. */
 int editor_sim_drawn_markup(void) { return drawn_markup; }
 int editor_sim_checkbox_point(int p, int *x, int *y) {
