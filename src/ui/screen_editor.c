@@ -578,10 +578,12 @@ static void edit_end(EditMark m) {
     pref_x = -1;
     mark_edited();
     int fences = compute_fences();
+    int cp0 = doc->cp;
     normalize_cursor();
+    int moved = doc->cp != cp0;     /* the cursor left the edited paragraph */
     if (m.before.p >= doc->n) { m.before.p = doc->n - 1; m.before.l = 0; }
     if (m.before.l >= lay(m.before.p)->n) m.before.l = lay(m.before.p)->n - 1;
-    if (fences || ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
+    if (fences || moved || ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     Lay *l = lay(doc->cp);
     int to_bottom = doc->n != m.n0 || l->n != m.lines0 || l->lh != m.lh0 || (int)l->ps.type != m.type0;
     Pos end = { doc->cp, l->n - 1 };
@@ -629,6 +631,14 @@ static void append_empty_para(void) {
     compute_fences();
     doc_set_cursor(doc, doc->n - 1, 0);
     mark_edited();
+}
+
+/* Appends the empty paragraph, scrolls to it and redraws. */
+static void append_and_show(void) {
+    append_empty_para();
+    ensure_cursor_visible();
+    full_text_redraw(UPD_FAST);
+    update_auto_shift();
 }
 
 /* Formatted view: the cursor never rests in a hidden paragraph or on hidden bytes. */
@@ -693,9 +703,7 @@ static void vertical_move(int lines) {
     }
     int keep = pref_x, p, o;
     if (hidden_tail && !moved) {
-        append_empty_para();
-        full_text_redraw(UPD_FAST);
-        update_auto_shift();
+        append_and_show();
         pref_x = -1;
         return;
     }
@@ -739,10 +747,7 @@ static void cursor_step(int dir) {
     int q = dir < 0 ? visible_before(doc->cp) : visible_after(doc->cp);
     if (q >= 0) move_cursor_to(q, dir < 0 ? doc->p[q].len : fv_content_start(&lay(q)->ps));
     else if (dir > 0 && doc->cp + 1 < doc->n) {     /* only hidden paragraphs follow */
-        append_empty_para();
-        ensure_cursor_visible();
-        full_text_redraw(UPD_FAST);
-        update_auto_shift();
+        append_and_show();
     }
 }
 
@@ -1200,10 +1205,7 @@ static void tap_text(int x, int y) {
         Pos e = a;
         if (!pos_next(&e)) {        /* below the text, with only hidden paragraphs after it */
             pref_x = -1;
-            append_empty_para();
-            ensure_cursor_visible();
-            full_text_redraw(UPD_FAST);
-            update_auto_shift();
+            append_and_show();
             return;
         }
     }
@@ -1326,6 +1328,7 @@ Screen screen_editor = { enter, draw, pointer, device_key, text_input, action, l
 Osk *editor_sim_osk(void) { return &osk; }
 Doc *editor_sim_doc(void) { return doc; }
 /* In Formatted view the cursor must be on a visible paragraph at a canonical offset. */
+int editor_sim_cursor_visible(void) { return line_y(cursor_pos()) >= 0; }
 int editor_sim_cursor_ok(void) {
     if (!fmt()) return 1;
     Lay *l = lay(doc->cp);

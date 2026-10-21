@@ -19,6 +19,7 @@ Doc *editor_sim_doc(void);
 int editor_sim_checkbox_point(int p, int *x, int *y);
 int editor_sim_drawn_markup(void);
 int editor_sim_cursor_ok(void);
+int editor_sim_cursor_visible(void);
 
 static char out_dir[512], root[600], cfg[600];
 const char *sim_root(void) { return root; }
@@ -336,6 +337,24 @@ int main(int argc, char **argv) {
         expect(saved && sl >= 9 && !strcmp(saved + sl - 9, "text\n---\n"), "Down below a trailing divider appends an empty paragraph");
         expect(editor_sim_cursor_ok(), "cursor is valid after the append");
         free(saved);
+        /* A note whose last visible line is at the bottom edge, then a divider. */
+        tap_slot(5);
+        tap_slot(3);
+        type_physical("text", LAYOUT_EN);
+        for (int i = 0; i < 60; i++) type_physical("\nline", LAYOUT_EN);
+        type_physical("\n---", LAYOUT_EN);
+        tap_slot(3);                    /* Formatted view */
+        tap_slot(0);                    /* keyboard off so the divider sits near the bottom */
+        for (int i = 0; i < 40; i++) key(KC_PAGEUP);
+        for (int i = 0; i < 400; i++) key(KC_DOWN);
+        expect(editor_sim_cursor_ok() && editor_sim_cursor_visible(), "Down past a bottom divider keeps the cursor on screen");
+        tap_slot(0);
+        tap_back();
+        /* Typing a divider as the last line hides it at once. */
+        tap_slot(5);
+        type_physical("abc\n---", LAYOUT_EN);
+        expect(editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(), "typed divider is not drawn and the cursor is valid");
+        sim_advance(5000);
         tap_back();
     }
 
