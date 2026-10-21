@@ -7,7 +7,7 @@ Keep journals, work notes, recipes, research, or a novel in progress. Notes are 
 files in ordinary folders, so you can open them on any computer.
 
 <p>
-  <img src="docs/screenshots/note.png" width="260" alt="A formatted note">
+  <img src="docs/screenshots/note.png" width="260" alt="A note in Formatted view, with colour">
   <img src="docs/screenshots/keyboard.png" width="260" alt="Typing with the on-screen keyboard">
   <img src="docs/screenshots/zen.png" width="260" alt="Zen mode">
 </p>
@@ -15,6 +15,9 @@ files in ordinary folders, so you can open them on any computer.
   <img src="docs/screenshots/projects.png" width="260" alt="Projects">
   <img src="docs/screenshots/project.png" width="260" alt="A project's folders and notes">
   <img src="docs/screenshots/formatting.png" width="260" alt="Formatting menu">
+</p>
+<p>
+  <img src="docs/screenshots/source.png" width="260" alt="Source view: the note as saved, with its Markdown symbols">
 </p>
 
 ## Features
@@ -27,10 +30,18 @@ files in ordinary folders, so you can open them on any computer.
   - bulleted, numbered and nested lists, plus task lists you tick with a tap;
   - links, images (shown as their caption), tables (columns aligned).
 
-  Markup characters stay visible in light grey, so the cursor never jumps unexpectedly.
-- **Formatting menu:** applies any of the above to the current line or word. Enter continues a
-  list, and Enter on an empty item ends it.
-- **Zen mode:** just your text, with no toolbars and no formatting. One tap in and one tap out.
+- **Two views:** *Formatted* is the default. The note looks like a word-processor page and shows
+  no Markdown symbols. Typing works like Word: bold and other styles carry on across spaces,
+  `---` makes a divider, `` ``` `` makes a code block, and Backspace at the start of a heading or list
+  item removes that formatting. *Source* shows the file exactly as saved, in a fixed-width font.
+  The `</>` button switches between them, and the app remembers your choice.
+- **Colour:** in Formatted view, highlights are yellow, links and quote bars are blue, ticks on
+  done tasks are green, and code has a pale blue tint. On black-and-white PocketBooks these show
+  as greys.
+- **Formatting menu:** applies any of the above to the current line or word. With no word
+  selected, choosing a style turns it on for what you type next. Enter continues a list, and
+  Enter on an empty item ends it.
+- **Zen mode:** just your text, with no toolbars and no formatting (plain text, as in Source view). One tap in and one tap out.
 - **Quick notes:** the 💡 button saves a thought straight into the project's `Ideas` folder.
 - **On-screen keyboard** built for e-ink:
   - English, Ukrainian and symbol layouts;
