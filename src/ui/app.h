@@ -61,14 +61,14 @@ int draw_wrapped(ifont *f, int color, Rect box, const char *text, int draw);
 void draw_text_fit(ifont *f, int color, Rect box, const char *s, int align);
 void draw_button(Rect r, const char *label, int filled);
 /* left_icon: an IconId shown at the left (back/close), or -1 for none. */
-void draw_header(const char *title, int left_icon);
+void draw_header(const char *title, int left_icon, int right_slots);
 Rect header_back_rect(void);
 /* Icon buttons on the right side of the header, counted from the right edge (0 = rightmost). */
 Rect header_slot(int index_from_right);
 typedef enum { ICON_BACK, ICON_KEYBOARD, ICON_PLUS, ICON_BULB, ICON_DOTS, ICON_TEXT, ICON_FOLDER,
                ICON_DOC, ICON_LEFT, ICON_RIGHT, ICON_UP, ICON_DOWN, ICON_SHIFT, ICON_SHIFT_LOCK,
                ICON_BACKSPACE, ICON_ENTER, ICON_HIDE, ICON_CLOSE, ICON_CHEVRON_DOWN, ICON_CHEVRON_RIGHT,
-               ICON_BOOK, ICON_SETTINGS, ICON_FORMAT, ICON_ZEN, ICON_ZEN_EXIT } IconId;
+               ICON_BOOK, ICON_SETTINGS, ICON_FORMAT, ICON_ZEN, ICON_ZEN_EXIT, ICON_SOURCE } IconId;
 /* Draws a Lucide icon centred in r on a white background. */
 void draw_icon(IconId id, Rect r, int color);
 /* Same, on a known background colour (keys, pressed buttons). */

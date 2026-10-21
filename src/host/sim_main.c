@@ -172,6 +172,7 @@ int main(int argc, char **argv) {
     tap_row(1);                         /* The Grey City (sorted: Recipes, The Grey City, Work notes) */
     shot("04-project-outline");
     tap_row(1);                         /* Scene 1 */
+    tap_slot(3);                        /* Source view on */
     type_physical("# Chapter One\n"
                   "The grey city woke slowly. *Nobody* noticed the **first** green leaf.\n"
                   "## To do\n"
@@ -190,9 +191,21 @@ int main(int argc, char **argv) {
     expect(note && strstr(note, "1. Opening\n2. Market scene\n\n---"), "numbered list continues with 2.");
     free(note);
     shot("05-editor-keyboard");
+    {
+        char *cfgtxt = storage_read(cfg, NULL);
+        expect(cfgtxt && strstr(cfgtxt, "source_view=1"), "Source view saved in settings");
+        free(cfgtxt);
+    }
 
     printf("3. Tick a checkbox, formatting menu\n");
     tap_slot(0);                        /* hide the keyboard so the whole note shows */
+    shot("06b-source-view");
+    tap_slot(3);                        /* Source view off */
+    {
+        char *cfgtxt = storage_read(cfg, NULL);
+        expect(cfgtxt && strstr(cfgtxt, "source_view=0"), "Source view off saved in settings");
+        free(cfgtxt);
+    }
     {
         int x, y;
         if (editor_sim_checkbox_point(3, &x, &y)) tap(x, y);
@@ -212,7 +225,7 @@ int main(int argc, char **argv) {
     free(note);
 
     printf("4. Zen mode\n");
-    tap_slot(3);
+    tap_slot(4);
     shot("08-zen");
     tap(SWd - hdr * 6 / 10 / 2 - 8, hdr * 6 / 10 / 2);   /* exit Zen */
     expect(1, "left Zen mode");
@@ -242,7 +255,7 @@ int main(int argc, char **argv) {
     tap_menu("Мова: українська");
 
     printf("7. Quick note\n");
-    tap_slot(4);
+    tap_slot(5);
     type_physical("Idea: the cat knows the way", LAYOUT_EN);
     tap_back();
     shot("12-outline-with-idea");

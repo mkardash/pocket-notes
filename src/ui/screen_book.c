@@ -135,7 +135,7 @@ static void draw_row(int i, const Row *row) {
 }
 
 static void draw(void) {
-    draw_header(root ? root->title : "", ICON_BACK);
+    draw_header(root ? root->title : "", ICON_BACK, 2);
     draw_icon(ICON_PLUS, header_slot(0), BLACK);
     draw_icon(ICON_BULB, header_slot(1), BLACK);
     int per = rows_per_page();

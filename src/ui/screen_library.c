@@ -32,7 +32,7 @@ static void enter(void) {
 }
 
 static void draw(void) {
-    draw_header(T(S_MY_PROJECTS), ICON_CLOSE);
+    draw_header(T(S_MY_PROJECTS), ICON_CLOSE, 1);
     draw_icon(ICON_PLUS, header_slot(0), BLACK);
     if (books.n == 0) {
         draw_wrapped(f_ui, DGRAY, rect_make(g_margin * 2, SH / 3, SW - 4 * g_margin, SH / 6), T(S_NO_PROJECTS), 1);

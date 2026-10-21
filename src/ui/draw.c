@@ -90,14 +90,14 @@ void draw_button(Rect r, const char *label, int filled) {
 Rect header_back_rect(void) { return rect_make(0, 0, g_header_h + 10, g_header_h); }
 Rect header_slot(int i) { return rect_make(SW - (i + 1) * g_header_h, 0, g_header_h, g_header_h); }
 
-void draw_header(const char *title, int left_icon) {
+void draw_header(const char *title, int left_icon, int right_slots) {
     FillArea(0, 0, SW, g_header_h, WHITE);
     int x = g_margin;
     if (left_icon >= 0) {
         draw_icon((IconId)left_icon, header_back_rect(), BLACK);
         x = header_back_rect().w;
     }
-    draw_text_fit(f_ui_bold, BLACK, rect_make(x, 0, SW - x - 3 * g_header_h - 10, g_header_h), title, 0);
+    draw_text_fit(f_ui_bold, BLACK, rect_make(x, 0, SW - x - right_slots * g_header_h - 10, g_header_h), title, 0);
     FillArea(0, g_header_h - 3, SW, 3, BLACK);
 }
 
@@ -133,6 +133,7 @@ static int bitmap_index(IconId id) {
     case ICON_FORMAT: return GI_FORMAT;
     case ICON_ZEN: return GI_ZEN;
     case ICON_ZEN_EXIT: return GI_ZEN_EXIT;
+    case ICON_SOURCE: return GI_SOURCE;
     }
     return GI_DOTS;
 }

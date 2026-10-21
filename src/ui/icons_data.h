@@ -30,6 +30,7 @@ enum {
     GI_FORMAT,
     GI_ZEN,
     GI_ZEN_EXIT,
+    GI_SOURCE,
     GI_COUNT
 };
 

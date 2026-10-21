@@ -39,6 +39,8 @@ static int in_code_cap = 0;
 /* ---------- geometry ---------- */
 
 static int zen(void) { return g_settings.zen; }
+static int src(void) { return !g_settings.zen && g_settings.source_view; }   /* Source view: raw text in the mono font */
+static int fmt(void) { return !g_settings.zen && !g_settings.source_view; }   /* Formatted view */
 static int own_kb(void) { return kb_visible; }
 static int zen_bar(void) { return g_header_h * 6 / 10; }
 static int status_h(void) { return zen() ? 0 : f_small->height + 24; }
@@ -52,7 +54,7 @@ static Rect status_rect(void) { return rect_make(0, status_y(), SW, status_h());
 static Rect zen_exit_rect(void) { return rect_make(SW - zen_bar() - 8, 0, zen_bar(), zen_bar()); }
 static Rect zen_kb_rect(void) { return rect_make(SW - 2 * zen_bar() - 16, 0, zen_bar(), zen_bar()); }
 /* Header buttons from the right: keyboard, settings, formatting, Zen, quick note. */
-enum { SLOT_KEYBOARD, SLOT_SETTINGS, SLOT_FORMAT, SLOT_ZEN, SLOT_QUICK };
+enum { SLOT_KEYBOARD, SLOT_SETTINGS, SLOT_FORMAT, SLOT_SOURCE, SLOT_ZEN, SLOT_QUICK };
 
 /* ---------- fenced code blocks ---------- */
 
@@ -106,6 +108,7 @@ static int measure_styled(void *ctx, const char *s, int len);
 
 static ifont *font_for_type(BlockType t, int level, unsigned char st) {
     if (g_settings.zen) return f_text;
+    if (g_settings.source_view) return f_mono;
     switch (t) {
     case BLK_HEADING: return f_head[level - 1];
     case BLK_CODE: case BLK_FENCE: case BLK_TABLE: case BLK_TABLE_RULE: return f_mono;
@@ -162,6 +165,13 @@ static void compute_layout(Lay *l, int p) {
     BlockType t = l->ps.type;
     l->lh = l->font->height * 135 / 100;
     l->space_before = 0;
+    if (src()) {   /* raw text: no hanging indent, first-line indent or heading spacing */
+        l->first_x = l->rest_x = 0;
+        l->first_w = l->rest_w = W;
+        MCtx ms = ctx_of(l, p);
+        l->n = layout_wrap_first(para->s, para->len, W, W, measure_styled, &ms, &l->lines, &l->cap);
+        return;
+    }
     if (t == BLK_HEADING) { l->lh = l->font->height * 125 / 100; if (p > 0) l->space_before = f_text->height / 2; }
     l->first_x = l->rest_x = 0;
     l->first_w = l->rest_w = W;
@@ -283,7 +293,7 @@ static void draw_line(Pos a, int y) {
     Para *para = &doc->p[a.p];
     int h = line_h(a);
     BlockType t = L->ps.type;
-    int styled = !zen();
+    int styled = fmt();
     FillArea(tr.x - 12, y, tr.w + 24, h, styled && (t == BLK_CODE || t == BLK_FENCE) ? CODE_BG : WHITE);
     LineSpan sp = L->lines[a.l];
     int cy = y + (a.l == 0 ? L->space_before : 0);
@@ -415,11 +425,13 @@ static void draw(void) {
         draw_icon(ICON_KEYBOARD, zen_kb_rect(), LGRAY);
         draw_icon(ICON_ZEN_EXIT, zen_exit_rect(), LGRAY);
     } else {
-        draw_header(e_title, ICON_BACK);
+        draw_header(e_title, ICON_BACK, 5);
         draw_icon(ICON_KEYBOARD, header_slot(SLOT_KEYBOARD), BLACK);
         if (own_kb()) FillArea(header_slot(SLOT_KEYBOARD).x + 24, g_header_h - 14, g_header_h - 48, 5, BLACK);
         draw_icon(ICON_SETTINGS, header_slot(SLOT_SETTINGS), BLACK);
         draw_icon(ICON_FORMAT, header_slot(SLOT_FORMAT), BLACK);
+        draw_icon(ICON_SOURCE, header_slot(SLOT_SOURCE), BLACK);
+        if (src()) FillArea(header_slot(SLOT_SOURCE).x + 24, g_header_h - 14, g_header_h - 48, 5, BLACK);
         draw_icon(ICON_ZEN, header_slot(SLOT_ZEN), BLACK);
         draw_icon(ICON_BULB, header_slot(SLOT_QUICK), BLACK);
     }
@@ -621,7 +633,7 @@ static void line_home_end(int end) {
     Lay *l = lay(c.p);
     LineSpan s = l->lines[c.l];
     int o = s.start;
-    if (c.l == 0 && !zen() && !end && doc->co > l->ps.marker_len) o = l->ps.marker_len;  /* skip the marker */
+    if (c.l == 0 && fmt() && !end && doc->co > l->ps.marker_len) o = l->ps.marker_len;  /* skip the marker */
     if (end) {
         o = s.start + s.len;
         if (c.l + 1 < l->n && o > s.start && doc->p[c.p].s[o - 1] == ' ') o--;
@@ -902,6 +914,12 @@ static void toggle_keyboard(void) {
     apply_view_change();
 }
 
+static void toggle_source(void) {
+    g_settings.source_view = !g_settings.source_view;
+    apply_view_change();
+    app_redraw(UPD_FULL);
+}
+
 static void toggle_zen(void) {
     g_settings.zen = !g_settings.zen;
     apply_view_change();
@@ -1071,7 +1089,7 @@ static void tap_text(int x, int y) {
     if (!found) a = last;
     Lay *l = lay(a.p);
     /* Tapping a checkbox ticks it. */
-    if (!zen() && a.l == 0 && (l->ps.type == BLK_TODO || l->ps.type == BLK_DONE)) {
+    if (fmt() && a.l == 0 && (l->ps.type == BLK_TODO || l->ps.type == BLK_DONE)) {
         int bx0 = line_x(a) + width_of(l, a.p, 0, l->ps.box_off);
         int bx1 = line_x(a) + width_of(l, a.p, 0, l->ps.box_off + 3);
         if (x >= bx0 - 20 && x <= bx1 + 20) { toggle_checkbox(a.p); return; }
@@ -1128,6 +1146,7 @@ static void pointer(int type, int x, int y) {
         if (rect_hit(header_slot(SLOT_KEYBOARD), x, y)) { toggle_keyboard(); return; }
         if (rect_hit(header_slot(SLOT_SETTINGS), x, y)) { open_settings_menu(); return; }
         if (rect_hit(header_slot(SLOT_FORMAT), x, y)) { open_format_menu(); return; }
+        if (rect_hit(header_slot(SLOT_SOURCE), x, y)) { toggle_source(); return; }
         if (rect_hit(header_slot(SLOT_ZEN), x, y)) { toggle_zen(); return; }
         if (rect_hit(header_slot(SLOT_QUICK), x, y)) { quick_note(); return; }
     }
