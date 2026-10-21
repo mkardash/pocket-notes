@@ -44,7 +44,7 @@ files in ordinary folders, so you can open them on any computer.
 - **Zen mode:** just your text, with no toolbars and no formatting (plain text, as in Source view). One tap in and one tap out.
 - **Quick notes:** the 💡 button saves a thought straight into the project's `Ideas` folder.
 - **On-screen keyboard** built for e-ink:
-  - English, Ukrainian and symbol layouts;
+  - several keyboard languages (choose yours in Settings), plus symbols;
   - capitals at the start of sentences;
   - cursor keys, and Backspace that repeats while held.
 - **Physical keyboards:** supported when the device firmware passes key presses to apps (see
@@ -92,7 +92,7 @@ PocketNotes/
 
 | Keys | Action |
 |---|---|
-| Ctrl+Space, Alt+Shift, Ctrl+Shift | Switch English / Ukrainian |
+| Ctrl+Space, Alt+Shift, Ctrl+Shift | Switch keyboard language |
 | Alt + `-` `,` `.` `/` `'` | — « » … ’ |
 | Ctrl+S | Save now |
 | Arrows, Home/End, PgUp/PgDn | Move the cursor |

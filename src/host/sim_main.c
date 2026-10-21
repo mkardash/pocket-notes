@@ -20,6 +20,8 @@ int editor_sim_checkbox_point(int p, int *x, int *y);
 int editor_sim_drawn_markup(void);
 int editor_sim_cursor_ok(void);
 int editor_sim_cursor_visible(void);
+int editor_sim_layout(void);
+int osk_sim_variant_point(Osk *k, const char *text, int *x, int *y);
 
 static char out_dir[512], root[600], cfg[600];
 const char *sim_root(void) { return root; }
@@ -269,6 +271,81 @@ int main(int argc, char **argv) {
     shot("11-ukrainian-interface");
     tap_slot(1);
     tap_menu("Мова: українська");
+
+    printf("6b. Keyboard languages\n");
+    {
+        Osk *kk = editor_sim_osk();
+        tap_slot(1);
+        tap_menu("Keyboard languages");
+        tap_menu("Deutsch: off");
+        {
+            int x, y;
+            expect(popup_sim_item("Deutsch: on", &x, &y), "menu shows Deutsch: on");
+        }
+        tap(10, SHd - 10);              /* close the menu */
+        char *st = storage_read(cfg, NULL);
+        const char *lp = st ? strstr(st, "layouts=") : NULL;
+        expect(lp && (atoi(lp + 8) & (1 << LAYOUT_DE)), "settings file has the German bit");
+        free(st);
+        for (int i = 0; i < 3 && editor_sim_layout() != LAYOUT_DE; i++) tap_osk_type(kk, OSK_LANG);
+        expect(editor_sim_layout() == LAYOUT_DE, "language key reaches German");
+        int has_u = 0, ek = -1;
+        for (int i = 0; i < kk->nkeys; i++) {
+            if (kk->defs[i]->type != OSK_CHAR) continue;
+            if (kk->defs[i]->lower && !strcmp(kk->defs[i]->lower, "ü")) has_u = 1;
+            if (kk->defs[i]->lower && !strcmp(kk->defs[i]->lower, "e")) ek = i;
+        }
+        expect(has_u && ek >= 0, "German keyboard has ü and e");
+        if (ek >= 0) {
+            int cx = kk->rects[ek].x + kk->rects[ek].w / 2, cy = kk->rects[ek].y + kk->rects[ek].h / 2;
+            app_handler(EVT_POINTERDOWN, cx, cy);
+            sim_advance(600);
+            app_handler(EVT_POINTERUP, cx, cy);
+            int vx, vy;
+            expect(osk_sim_variant_point(kk, "é", &vx, &vy), "long-press on e opens a popup with é");
+            shot("16-german-keyboard");
+            char *before = saved_note();
+            tap(vx, vy);
+            sim_advance(5000);
+            char *after = saved_note();
+            expect(after && strstr(after, "é") && (!before || !strstr(before, "é")), "tapping é types it, and releasing did not type e");
+            free(before);
+            free(after);
+            expect(!osk_sim_variant_point(kk, "é", &vx, &vy), "popup closed after the choice");
+        }
+        tap_osk_type(kk, OSK_LANG);
+        expect(editor_sim_layout() != LAYOUT_DE, "language key leaves German");
+        /* Turn every language off: one must stay on. */
+        for (int l = 0; l < LAYOUT_COUNT; l++) {
+            char nm[160];
+            tap_slot(1);
+            tap_menu("Keyboard languages");
+            snprintf(nm, sizeof nm, "%s: on", keys_layout_name((KbLayout)l));
+            int x, y;
+            if (popup_sim_item(nm, &x, &y)) tap_menu(nm);
+            tap(10, SHd - 10);
+        }
+        st = storage_read(cfg, NULL);
+        lp = st ? strstr(st, "layouts=") : NULL;
+        unsigned m = lp ? (unsigned)atoi(lp + 8) : 0;
+        expect(m != 0 && (m & (m - 1)) == 0, "turning everything off leaves exactly one language on");
+        free(st);
+        /* Back to the defaults: UK and EN on, DE off, English layout. */
+        for (int l = 0; l < LAYOUT_COUNT; l++) {
+            const char *nm = keys_layout_name((KbLayout)l);
+            char off[160], on[160];
+            snprintf(off, sizeof off, "%s: off", nm);
+            snprintf(on, sizeof on, "%s: on", nm);
+            int want = l == LAYOUT_UK || l == LAYOUT_EN, x, y;
+            tap_slot(1);
+            tap_menu("Keyboard languages");
+            if (want && popup_sim_item(off, &x, &y)) tap_menu(off);
+            else if (!want && popup_sim_item(on, &x, &y)) tap_menu(on);
+            tap(10, SHd - 10);
+        }
+        for (int i = 0; i < 3 && editor_sim_layout() != LAYOUT_EN; i++) tap_osk_type(kk, OSK_LANG);
+        expect(editor_sim_layout() == LAYOUT_EN, "back on the English layout");
+    }
 
     printf("7. Quick note\n");
     tap_slot(5);

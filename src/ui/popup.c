@@ -250,7 +250,7 @@ void popup_pointer(int type, int x, int y) {
             OskResult r = osk_activate(&P.osk, k, app_now_ms());
             if (r.redraw_keyboard) { osk_draw(&P.osk); app_update(P.osk.area, UPD_FAST); }
             if (r.action == ACT_TOGGLE_LAYOUT) {
-                g_settings.layout = P.osk.letters_page == OSK_PAGE_EN ? LAYOUT_EN : LAYOUT_UK;
+                g_settings.layout = P.osk.letters_page;
             } else if (r.action == ACT_HIDE_KEYBOARD) {
                 /* The name field needs the keyboard; treat hide as cancel. */
                 finish_prompt(0);

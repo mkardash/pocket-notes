@@ -21,6 +21,7 @@
 #define CLEAN_MS 1200
 #define REPEAT_FIRST_MS 450
 #define REPEAT_NEXT_MS 90
+#define LONG_PRESS_MS 500
 #define HISTORY_KEEP 20
 
 static char e_project[1024], e_path[1024], e_title[512];
@@ -30,7 +31,7 @@ static int kb_visible = 1;
 static int top_p = 0, top_l = 0;        /* first visible line */
 static int pref_x = -1;                 /* remembered screen x for up/down moves */
 static int save_failed = 0, backed_up = 0;
-static int pressed_key = -1, repeated = 0;
+static int pressed_key = -1, repeated = 0, long_opened = 0;
 static int down_x = -1, down_y = -1, down_in_text = 0;
 static int needs_clean = 0;
 static int render_ver = 1;              /* bump to re-layout everything (font, width, mode) */
@@ -442,7 +443,7 @@ static void draw_status(void) {
     localtime_r(&now, &tmv);
     const char *state = save_failed ? T(S_UNSAVED) : (doc && doc->modified ? "•" : T(S_SAVED));
     snprintf(right, sizeof right, "%s   %s   %02d:%02d   %d%%", state,
-             g_settings.layout == LAYOUT_EN ? "ENG" : "УКР", tmv.tm_hour, tmv.tm_min, GetBatteryPower());
+             keys_layout_short((KbLayout)g_settings.layout), tmv.tm_hour, tmv.tm_min, GetBatteryPower());
     Rect inner = rect_make(g_margin, r.y, SW - 2 * g_margin, r.h);
     draw_text_fit(f_small, DGRAY, inner, left, 0);
     draw_text_fit(f_small, DGRAY, inner, right, 2);
@@ -1477,6 +1478,7 @@ void editor_open(const char *project_dir, const char *doc_path, int para, int of
 }
 
 static void enter(void) {
+    osk_close_variants(&osk);
     relayout_all();
     normalize_cursor();
     reset_type_style();
@@ -1540,7 +1542,38 @@ static void cycle_font(void) {
     change_font_size(0);
 }
 
-enum { SET_LARGER, SET_SMALLER, SET_FONT, SET_INDENT, SET_LANGUAGE, SET_REFRESH };
+enum { SET_LARGER, SET_SMALLER, SET_FONT, SET_INDENT, SET_LANGUAGE, SET_KB_LANGS, SET_REFRESH };
+
+static void action(Action a);
+static void open_kb_languages_menu(void);
+
+/* Tapping a language toggles it and reopens the menu. The last one on stays on. */
+static void kb_language_chosen(int idx, void *ctx) {
+    (void)ctx;
+    if (idx < 0 || idx >= LAYOUT_COUNT) return;
+    unsigned bit = 1u << idx;
+    if (!(g_settings.layouts & bit)) g_settings.layouts |= bit;
+    else if (g_settings.layouts != bit) {
+        g_settings.layouts &= ~bit;
+        if (g_settings.layout == idx) {
+            g_settings.layout = keys_next_layout((KbLayout)idx, g_settings.layouts);
+            action(ACT_TOGGLE_LAYOUT);          /* page, status bar, save */
+        }
+    }
+    app_save_settings();
+    open_kb_languages_menu();
+}
+
+static void open_kb_languages_menu(void) {
+    char text[LAYOUT_COUNT][160];
+    const char *items[LAYOUT_COUNT];
+    for (int i = 0; i < LAYOUT_COUNT; i++) {
+        snprintf(text[i], sizeof text[i], T(g_settings.layouts & (1u << i) ? S_KB_LANG_ON : S_KB_LANG_OFF),
+                 keys_layout_name((KbLayout)i));
+        items[i] = text[i];
+    }
+    popup_menu(T(S_KB_LANGUAGES), items, LAYOUT_COUNT, kb_language_chosen, NULL);
+}
 
 static void settings_chosen(int idx, void *ctx) {
     switch (idx) {
@@ -1553,6 +1586,7 @@ static void settings_chosen(int idx, void *ctx) {
         i18n_set(g_settings.ui_lang);
         apply_view_change();
         break;
+    case SET_KB_LANGS: open_kb_languages_menu(); break;
     case SET_REFRESH: app_redraw(UPD_FULL); break;
     }
 }
@@ -1563,13 +1597,12 @@ static void open_settings_menu(void) {
     const char *items[] = {
         T(S_LARGER), T(S_SMALLER), font_item,
         T(g_settings.indent ? S_INDENT_ON : S_INDENT_OFF),
-        T(S_UI_LANGUAGE), T(S_REFRESH),
+        T(S_UI_LANGUAGE), T(S_KB_LANGUAGES), T(S_REFRESH),
     };
-    popup_menu(T(S_SETTINGS), items, 6, settings_chosen, NULL);
+    popup_menu(T(S_SETTINGS), items, 7, settings_chosen, NULL);
 }
 
 static void run_osk_key(int k);
-static void action(Action a);
 
 static void key_repeat(void) {
     if (pressed_key < 0) return;
@@ -1577,6 +1610,22 @@ static void key_repeat(void) {
     run_osk_key(pressed_key);
     app_flush();
     SetHardTimer("pn_repeat", key_repeat, REPEAT_NEXT_MS);
+}
+
+static void long_press_fire(void) {
+    if (pressed_key < 0 || !own_kb()) return;
+    if (osk_open_variants(&osk, pressed_key)) {
+        long_opened = 1;
+        osk_draw(&osk);
+        app_update(osk.area, UPD_FAST);
+        app_flush();
+    }
+}
+
+static void close_variants(void) {
+    if (!osk.var_n) return;
+    osk_close_variants(&osk);
+    if (own_kb()) { osk_draw(&osk); app_update(osk.area, UPD_FAST); }
 }
 
 static void run_osk_key(int k) {
@@ -1587,8 +1636,9 @@ static void run_osk_key(int k) {
         app_update(osk.area, UPD_FAST);
     }
     if (r.action == ACT_TOGGLE_LAYOUT) {
-        g_settings.layout = osk.letters_page == OSK_PAGE_EN ? LAYOUT_EN : LAYOUT_UK;
+        g_settings.layout = osk.letters_page;
         app_save_settings();
+        if (!zen()) { draw_status(); app_update(status_rect(), UPD_FAST); }
     } else if (r.action != ACT_NONE) {
         action(r.action);
     }
@@ -1629,11 +1679,38 @@ static void tap_text(int x, int y) {
 
 static void pointer(int type, int x, int y) {
     if (!doc) return;
+    if (osk.var_n && !own_kb()) osk_close_variants(&osk);
+    if (osk.var_n) {
+        /* Variants popup open: a tap on a variant types it, any other tap closes the popup. */
+        if (type == EVT_POINTERUP && pressed_key >= 0 && long_opened) {
+            /* Release of the press that opened the popup. */
+            pressed_key = -1;
+            long_opened = 0;
+            osk_draw(&osk);
+            app_update(osk.area, UPD_FAST);
+            return;
+        }
+        if (type == EVT_POINTERUP) {
+            int v = osk_variant_at(&osk, x, y);
+            if (v >= 0) {
+                OskResult r = osk_pick_variant(&osk, v);
+                osk_draw(&osk);
+                app_update(osk.area, UPD_FAST);
+                if (r.text) do_insert(r.text);
+                after_input();
+            } else {
+                close_variants();
+            }
+        }
+        return;
+    }
     if (own_kb() && y >= kb_top()) {
         int k = osk_key_at(&osk, x, y);
         if (type == EVT_POINTERDOWN && k >= 0) {
             pressed_key = k;
             repeated = 0;
+            long_opened = 0;
+            if (osk_key_has_variants(&osk, k)) SetHardTimer("pn_long", long_press_fire, LONG_PRESS_MS);
             osk_draw_key(&osk, k, 1);
             app_update(osk.rects[k], UPD_FAST);
             if (osk_key_repeats(&osk, k)) SetHardTimer("pn_repeat", key_repeat, REPEAT_FIRST_MS);
@@ -1641,6 +1718,7 @@ static void pointer(int type, int x, int y) {
             int pk = pressed_key;
             pressed_key = -1;
             ClearTimer(key_repeat);
+            ClearTimer(long_press_fire);
             osk_draw_key(&osk, pk, 0);
             app_update(osk.rects[pk], UPD_FAST);
             if (pk == k && !repeated) run_osk_key(k);
@@ -1653,6 +1731,7 @@ static void pointer(int type, int x, int y) {
         int pk = pressed_key;
         pressed_key = -1;
         ClearTimer(key_repeat);
+        ClearTimer(long_press_fire);
         osk_draw_key(&osk, pk, 0);
         app_update(osk.rects[pk], UPD_FAST);
         return;
@@ -1733,6 +1812,7 @@ Screen screen_editor = { enter, draw, pointer, device_key, text_input, action, l
 
 #ifdef HOST_SIM
 Osk *editor_sim_osk(void) { return &osk; }
+int editor_sim_layout(void) { return g_settings.layout; }
 Doc *editor_sim_doc(void) { return doc; }
 /* In Formatted view the cursor must be on a visible paragraph at a canonical offset. */
 int editor_sim_cursor_visible(void) { return line_y(cursor_pos()) >= 0; }

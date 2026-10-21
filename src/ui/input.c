@@ -21,7 +21,7 @@ static int is_letter(const char *s) {
 }
 
 static void toggle_layout(void) {
-    g_settings.layout = g_settings.layout == LAYOUT_UK ? LAYOUT_EN : LAYOUT_UK;
+    g_settings.layout = keys_next_layout(g_settings.layout, g_settings.layouts);
     app_deliver_action(ACT_TOGGLE_LAYOUT);
 }
 
