@@ -325,6 +325,22 @@ static void test_fe_split(void) {
     /* After a link in a styled run: the opener run "**[" is trimmed to its marker prefix "**". */
     CHECK_STR(split("**[li^nk](u) x**"), "**[link](u)**/ **x**");
     CHECK(halves_clean(ST_BOLD));
+    /* A style spans the split but plain cut points work: no symbol shows, every URL stays. */
+    CHECK_STR(split("**a**^**b**"), "**a**/**b**");
+    CHECK(halves_clean(ST_BOLD));
+    CHECK_STR(split("![a](1)^![b](2)"), "![a](1)/![b](2)");
+    CHECK(halves_clean(ST_ITALIC));
+    CHECK_STR(split("![a](1)^*b*"), "![a](1)/*b*");
+    CHECK(halves_clean(ST_ITALIC));
+    CHECK_STR(split("*a*^![b](2)"), "*a*/![b](2)");
+    CHECK(halves_clean(ST_ITALIC));
+    CHECK_STR(split("**a^**[**b**](u)"), "**a**/[**b**](u)");
+    CHECK(halves_clean(ST_BOLD));
+    /* Enter at a join point undoes the join. */
+    CHECK_STR(join("**a**", "**b**"), "**a^****b**");
+    CHECK_STR(split("**a^****b**"), "**a**/**b**");
+    CHECK_STR(join("![a](1)", "*b*"), "![a^](1)*b*");
+    CHECK_STR(split("![a^](1)*b*"), "![a](1)/*b*");
     /* Typing after a split makes one paragraph again. */
     ins("a^", "b", 0);
     CHECK_INT(out.len2, 0);

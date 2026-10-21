@@ -975,9 +975,13 @@ void fe_split(const char *s, int len, int in_code, int off, FeOut *o) {
     render_slice(&x.exp, v, x.exp.n - v, in_code ? BLK_CODE : BLK_NORMAL, &x.exp2);
     x.exp.n = v;
 
+    /* Styles that span the split are closed and reopened. If that fails, or none spans, the
+     * split tries the plain cut points: s[0:c] and s[c:] for c over the hidden run. */
     sp.y = malloc(len + 1);
     sp.cl = malloc(len + 1);
-    if (!(sp.B ? split_spanning(&x, &sp) : split_at(&x, &sp, 0))) {
+    int ok = sp.B && split_spanning(&x, &sp);
+    sp.ws = 0;
+    if (!ok && !split_at(&x, &sp, 0)) {
         /* Fallback: the plain split at off. */
         Piece left = { s, off }, right = { s + off, len - off };
         put_pieces(&o->s, &o->cap, &o->len, &left, 1);
