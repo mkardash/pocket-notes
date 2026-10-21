@@ -37,7 +37,9 @@ static int needs_clean = 0;
 static int render_ver = 1;              /* bump to re-layout everything (font, width, mode) */
 static unsigned char *in_code = NULL;   /* per paragraph: inside a fenced code block */
 static int in_code_cap = 0;
-static int drawn_markup = 0;            /* ST_MARK bytes drawn as characters in the last full draw */
+#ifdef HOST_SIM
+static int drawn_markup = 0;            /* sim checks: ST_MARK bytes drawn as characters since the last full draw */
+#endif
 static int type_style = 0;              /* Formatted view: inline style (FV_INLINE bits) typed text gets */
 
 /* ---------- geometry ---------- */
@@ -381,10 +383,12 @@ static void draw_line(Pos a, int y) {
         if (styled) {
             if (st & ST_LINK) color = COL_LINK;
             else if (t == BLK_DONE && !(st & ST_MARK)) color = DGRAY;
+#ifdef HOST_SIM
             if ((st & ST_MARK) && !(t == BLK_NUMBER && j <= L->ps.marker_len)) {
                 /* Prefix spaces (after a bullet or '>') are gaps, not visible markup. */
                 for (int k = i; k < j; k++) if (para->s[k] != ' ') drawn_markup++;
             }
+#endif
         }
         int len = j - i < (int)sizeof buf - 1 ? j - i : (int)sizeof buf - 1;
         memcpy(buf, para->s + i, len);
@@ -417,7 +421,9 @@ static Rect draw_range(Pos from, const Pos *to) {
     int y = line_y(from);
     if (y < 0) return rect_make(0, 0, 0, 0);
     int y0 = y, bottom = tr.y + tr.h;
+#ifdef HOST_SIM
     if (!to) drawn_markup = 0;
+#endif
     Pos a = from;
     for (;;) {
         int h = line_h(a);
