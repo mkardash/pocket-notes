@@ -286,13 +286,22 @@ static int cand_build(Ins *x, const Cand *cd) {
     return raw;
 }
 
+/* Are the bytes [from, to) all visible? */
+static int all_visible(const Para *p, int from, int to) {
+    for (int i = from; i < to; i++)
+        if (p->hid[i]) return 0;
+    return 1;
+}
+
 /* Builds and parses a candidate, sets its cursor and returns the checks it passes. Once it
  * passes tier A the later checks are skipped. */
 static int cand_eval(Ins *x, Cand *cd) {
     int raw = cand_build(x, cd), f = 0;
     para_parse(&x->cur, x->o->s, x->o->len, x->in_code);
     cd->cursor = fv_snap(x->cur.s, x->cur.len, &x->cur.ps, x->cur.hid, raw);
-    if (cd->kind != K_ESCAPE) {
+    /* Tiers A to C also need every typed byte visible: otherwise the parser has taken it as
+     * markup (an old marker showing in its place) and the cursor would land before it. */
+    if (cd->kind != K_ESCAPE && all_visible(&x->cur, raw - x->tlen, raw)) {
         Check ck = { x->v, x->tlen, 0, 0, 0, 0, 0 };
         if (cd->kind == K_MOVE) {
             /* The moved whitespace may take on the typing style. */

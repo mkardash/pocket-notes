@@ -31,6 +31,23 @@ static const char *ins(const char *before, const char *t, int want) {
     return res;
 }
 
+/* Visible content of the last result, with '^' at the cursor. */
+static const char *shown(void) {
+    static char res[512];
+    unsigned char hid[512];
+    ParaStyle ps = {0};
+    int n = 0;
+    md_parse(out.s, out.len, 0, &ps);
+    fv_hidden(out.s, out.len, &ps, hid);
+    for (int i = fv_content_start(&ps); i <= out.len; i++) {
+        if (i == out.cursor) res[n++] = '^';
+        if (i < out.len && !hid[i]) res[n++] = out.s[i];
+    }
+    res[n] = 0;
+    md_free(&ps);
+    return res;
+}
+
 /* Types one letter at the end of an n-byte plain paragraph. */
 static void ins_long_plain(int n) {
     char *buf = malloc(n + 1);
@@ -75,6 +92,16 @@ static void test_fe_insert(void) {
     /* A second typed space with Bold on goes in plain, then the closer moves past the letter. */
     CHECK_STR(ins("**hello** ^", " ", ST_BOLD), "**hello**  ^");
     CHECK_STR(ins("**hello**  ^", "w", ST_BOLD), "**hello  w^**");
+
+    /* A marker typed after a closer of its kind: the typed byte is the visible one, cursor after it. */
+    CHECK_STR(ins("**a**^", "*", 0), "**a***^");        CHECK_STR(shown(), "a*^");
+    CHECK_STR(ins("**a**^", "*", ST_BOLD), "**a***^");  CHECK_STR(shown(), "a*^");
+    CHECK_STR(ins("**a**^", "**", 0), "**a****^");      CHECK_STR(shown(), "a**^");
+    CHECK_STR(ins("==hl==^", "=", 0), "==hl===^");      CHECK_STR(shown(), "hl=^");
+    CHECK_STR(ins("~~s~~^", "~", 0), "~~s~~~^");        CHECK_STR(shown(), "s~^");
+    CHECK_STR(ins("`c`^", "`", 0), "`c``^");            CHECK_STR(shown(), "c`^");
+    CHECK_STR(ins("_a_^", "_", 0), "*a*_^");            CHECK_STR(shown(), "a_^");
+    CHECK_STR(ins("*a*_^", "b", 0), "*a*_b^");          CHECK_STR(shown(), "a_b^");
 }
 
 void test_fmtedit_all(void) {
