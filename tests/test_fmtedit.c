@@ -214,6 +214,14 @@ static void test_fe_delete(void) {
     CHECK_STR(del("*a b^*"), "*a* ^");
     CHECK_STR(delf("**hello ^w**"), "**hello** ^");
     CHECK_STR(del("**a *b^***"), "**a** ^");        /* the inner run goes, the outer closer moves back */
+    /* The only character between two links: both destinations stay (none goes without its '['). */
+    CHECK_STR(del("[x](u) ^[y](v)"), "[x^](u)[y](v)");
+    CHECK_STR(del("[x](u)b^[y](v)"), "[x^](u)[y](v)");
+    CHECK_STR(delf("[x](u)^b[y](v)"), "[x^](u)[y](v)");
+    CHECK_STR(del("![x](u)b^![y](v)"), "![x^](u)![y](v)");
+    CHECK_STR(del("[x](u)b^[*y*](v)"), "[x^](u)[*y*](v)");
+    /* A link with no text is hidden whole: a cut next to it never takes it. */
+    CHECK_STR(del("**x^**[](u)"), "^[](u)");
 }
 
 static void test_fe_split(void) {

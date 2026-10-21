@@ -205,6 +205,7 @@ typedef struct {
     Para old, cur;          /* s parsed; the candidate being checked */
     Render exp, exp2, got;  /* expected render (exp2: a split's right half); the candidate's */
     unsigned char *inner;   /* [0..len]: IN_DEST spots and IN_NOTE bytes */
+    int *links, nlinks;     /* per destination or footnote label: link start, span start, span end */
     char *us;               /* s with its '_' emphasis markers turned into '*' */
     FeOut *o;
     int op;
@@ -223,10 +224,25 @@ typedef struct {
     Check ck;       /* restyle: how a candidate's render may differ from exp */
 } Edit;
 
+/* Offset where the link whose text ends at the ']' at offset i starts: its '[' (matched as the
+ * parser does, skipping escaped brackets), or the '!' before it for an image. */
+static int link_open(const Edit *x, int i) {
+    int depth = 1, k = i;
+    while (--k >= 0) {
+        if (x->old.ps.style[k] & ST_LITERAL) continue;
+        if (x->s[k] == ']') depth++;
+        else if (x->s[k] == '[' && --depth == 0) break;
+    }
+    if (k < 0) return 0;
+    return k > 0 && x->s[k - 1] == '!' && x->old.hid[k - 1] ? k - 1 : k;
+}
+
 /* Marks inner[c] |= IN_DEST for each spot inside a link destination or footnote label: from
  * just after its ']' (link) or '[' (footnote) up to its closing bracket. Text typed there would
  * change what the user cannot see, so those spots are never candidates and '_' there is not
- * emphasis. Each byte of a footnote reference also gets IN_NOTE: no edit removes or copies it. */
+ * emphasis. Each byte of a footnote reference also gets IN_NOTE: no edit removes or copies it.
+ * Each destination ("](...)") or label ("^...]") is also listed in x->links with the start of
+ * its link, so a cut can tell whether it would take a destination without its link. */
 static void find_inner(Edit *x) {
     const char *s = x->s;
     const unsigned char *hid = x->old.hid;
@@ -243,6 +259,11 @@ static void find_inner(Edit *x) {
         for (int c = i + 1; c <= e; c++) x->inner[c] |= IN_DEST;
         if (close == ']')
             for (int c = i; c <= e; c++) x->inner[c] |= IN_NOTE;
+        if (x->nlinks % 8 == 0) x->links = realloc(x->links, (x->nlinks + 8) * 3 * sizeof *x->links);
+        x->links[3 * x->nlinks] = close == ']' ? i : link_open(x, i);
+        x->links[3 * x->nlinks + 1] = close == ']' ? i + 1 : i;
+        x->links[3 * x->nlinks + 2] = e;
+        x->nlinks++;
         i = e;
     }
 }
@@ -328,6 +349,7 @@ static void edit_open(Edit *x, const char *s, int len, int in_code, FeOut *o) {
 
 static void edit_close(Edit *x) {
     free(x->inner);
+    free(x->links);
     free(x->us);
     para_free(&x->old);
     para_free(&x->cur);
@@ -563,6 +585,18 @@ static int try_inserts(Edit *x, const char *base, Tally *tl) {
     return 0;
 }
 
+/* Would the cut [c, d) lose a link's URL? A destination or footnote label may only go together
+ * with its whole link (from its '[', or an image's '!'), and only when that link's text holds
+ * the deleted character [a, b), so the delete empties it. Otherwise the URL would be lost:
+ * joined to the next link, or gone with a link that has no text and is hidden whole. */
+static int cut_loses_link(const Edit *x, int c, int d) {
+    for (int i = 0; i < x->nlinks; i++) {
+        const int *l = x->links + 3 * i;
+        if (c <= l[1] && l[2] < d && (c > l[0] || l[0] >= x->a || l[1] < x->b)) return 1;
+    }
+    return 0;
+}
+
 /* Can a move-closer-back candidate cut [c, d)? Only whitespace may be left between the run's
  * content and the rest of the hidden run after the cut, and something of that run must be left
  * to move. */
@@ -576,7 +610,8 @@ static int back_ok(const Edit *x, int c, int d) {
  * only visible byte between two hidden runs) by t + u descending, so its whole pair goes.
  * Then the move-closer-back candidates for the same cuts, in the same order: the rest of the
  * hidden run moves in front of the whitespace before the cut (its pass usually comes from tier
- * B, as that whitespace loses the style). Returns 1 when one passes tier A. */
+ * B, as that whitespace loses the style). A cut takes a link destination only with the whole
+ * link that the delete empties. Returns 1 when one passes tier A. */
 static int try_cuts(Edit *x, const char *base, Tally *tl) {
     static const int KINDS[] = { K_CUT, K_BACK };
     int np = x->a - x->p, nn = x->n - x->b, max = np + nn, emptied = np > 0 && nn > 0;
@@ -585,7 +620,8 @@ static int try_cuts(Edit *x, const char *base, Tally *tl) {
             int sum = emptied ? max - i : i;
             for (int t = 0; t <= np; t++) {
                 int u = sum - t, c = x->a - t, d = x->b + u;
-                if (u < 0 || u > nn || !spot_ok(x, c, x->a) || !spot_ok(x, d, x->b)) continue;
+                if (u < 0 || u > nn || !spot_ok(x, c, x->a) || !spot_ok(x, d, x->b) || cut_loses_link(x, c, d))
+                    continue;
                 if (KINDS[kd] == K_BACK && !back_ok(x, c, d)) continue;
                 if (consider(x, (Cand){ .kind = KINDS[kd], .c = c, .d = d, .base = base }, tl)) return 1;
             }
