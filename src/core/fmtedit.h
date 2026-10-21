@@ -21,4 +21,26 @@ extern int fe_parse_count;
    s must not point into o's buffers. */
 void fe_insert(const char *s, int len, int in_code, int off, const char *t, int tlen, int want, FeOut *o);
 
+/* Removes the visible character before / after canonical off. Returns 0 (o untouched) when there is none.
+   Otherwise writes the new paragraph to o->s/len and the canonical cursor to o->cursor.
+   Content starts after the block prefix, so the prefix is never deleted here. s must not point into o. */
+int fe_delete_back(const char *s, int len, int in_code, int off, FeOut *o);
+int fe_delete_forward(const char *s, int len, int in_code, int off, FeOut *o);
+
+/* Enter at canonical off: left text → o->s, right text → o->s2 (no block prefix added).
+   Styled runs that span off are closed on the left and reopened on the right. Inside link text
+   the split moves to just after the link. o->cursor is 0 (the start of the right text).
+   s must not point into o. */
+void fe_split(const char *s, int len, int in_code, int off, FeOut *o);
+
+/* Appends paragraph b's content (its block prefix dropped) to a. o->cursor = canonical join point.
+   a and b must not point into o. */
+void fe_join(const char *a, int alen, const char *b, int blen, FeOut *o);
+
+/* Adds or removes one inline style bit on visible bytes [a, b) (a word). Returns 0 and leaves o
+   untouched when no candidate renders correctly — never damages the text. The bit is removed when
+   every visible byte of the word has it, else added. bit is one of ST_BOLD, ST_ITALIC, ST_STRIKE,
+   ST_HL, ST_CODE. o->cursor is the canonical spot after the word. */
+int fe_restyle(const char *s, int len, int in_code, int a, int b, int bit, FeOut *o);
+
 #endif
