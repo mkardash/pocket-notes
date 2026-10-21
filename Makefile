@@ -4,9 +4,9 @@
 #   make device    - cross-compile build/device/PocketNotes.app for PocketBook (needs Docker + SDK volume)
 #   make install   - copy the app to a PocketBook mounted at /Volumes/PB700K3
 
-CORE := src/core/utf8.c src/core/doc.c src/core/layout.c src/core/book.c src/core/storage.c src/core/keys.c src/core/settings.c src/core/mdstyle.c
+CORE := src/core/utf8.c src/core/doc.c src/core/layout.c src/core/book.c src/core/storage.c src/core/keys.c src/core/settings.c src/core/mdstyle.c src/core/fmtview.c
 UI   := $(wildcard src/ui/*.c)
-TESTS := tests/test_main.c tests/test_doc.c tests/test_layout.c tests/test_book.c tests/test_keys.c tests/test_md.c
+TESTS := tests/test_main.c tests/test_doc.c tests/test_layout.c tests/test_book.c tests/test_keys.c tests/test_md.c tests/test_fmtview.c
 
 HOST_CFLAGS := -std=gnu99 -Wall -Wextra -Wno-unused-parameter -g -fsanitize=undefined
 
