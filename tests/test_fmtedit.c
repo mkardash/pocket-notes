@@ -61,6 +61,29 @@ static const char *shown(void) {
     return res;
 }
 
+/* Block type of the last result. */
+static int shown_type(void) {
+    ParaStyle ps = {0};
+    md_parse(out.s, out.len, 0, &ps);
+    int t = ps.type;
+    md_free(&ps);
+    return t;
+}
+
+/* Inline style (FV_INLINE | ST_LINK bits) of the first visible content byte c of the last
+ * result, or -1 when no visible byte is c. */
+static int style_of(char c) {
+    unsigned char hid[512];
+    ParaStyle ps = {0};
+    int st = -1;
+    md_parse(out.s, out.len, 0, &ps);
+    fv_hidden(out.s, out.len, &ps, hid);
+    for (int i = fv_content_start(&ps); i < out.len && st < 0; i++)
+        if (!hid[i] && out.s[i] == c) st = ps.style[i] & (FV_INLINE | ST_LINK);
+    md_free(&ps);
+    return st;
+}
+
 /* Types one letter at the end of an n-byte plain paragraph. */
 static void ins_long_plain(int n) {
     char *buf = malloc(n + 1);
@@ -222,6 +245,62 @@ static void test_fe_delete(void) {
     CHECK_STR(del("[x](u)b^[*y*](v)"), "[x^](u)[*y*](v)");
     /* A link with no text is hidden whole: a cut next to it never takes it. */
     CHECK_STR(del("**x^**[](u)"), "^[](u)");
+
+    /* The whole first word of a styled phrase: the opener moves forward past the space, which
+     * loses the style. No marker shows and the rest keeps its style. */
+    CHECK_STR(del("**h^ world**"), "^ **world**");
+    CHECK_STR(shown(), "^ world");
+    CHECK_INT(style_of('w'), ST_BOLD);
+    CHECK_STR(del("*h^ world*"), "^ *world*");          /* never "* world*", a bullet */
+    CHECK_INT(shown_type(), BLK_NORMAL);
+    CHECK_INT(style_of('w'), ST_ITALIC);
+    CHECK_STR(del("==h^ world=="), "^ ==world==");
+    CHECK_INT(style_of('w'), ST_HL);
+    CHECK_STR(del("~~h^ world~~"), "^ ~~world~~");
+    CHECK_INT(style_of('w'), ST_STRIKE);
+    CHECK_STR(del("_h^ world_"), "^ _world_");
+    CHECK_INT(style_of('w'), ST_ITALIC);
+    CHECK_STR(del("__h^ world__"), "^ __world__");
+    CHECK_INT(style_of('w'), ST_BOLD);
+    CHECK_STR(del("**Ж^ світ**"), "^ **світ**");
+    CHECK_STR(shown(), "^ світ");
+    CHECK_STR(del("a **h^ world** b"), "a ^ **world** b");
+    CHECK_STR(del("# **h^ world**"), "# ^ **world**");
+    CHECK_INT(shown_type(), BLK_HEADING);
+    CHECK_STR(del("- **h^ world**"), "- ^ **world**");
+    CHECK_INT(shown_type(), BLK_BULLET);
+    CHECK_STR(del("- [x] *h^ world*"), "- [x] ^ *world*");
+    CHECK_INT(shown_type(), BLK_DONE);
+    CHECK_STR(del("1. ==h^ world=="), "1. ^ ==world==");
+    CHECK_INT(shown_type(), BLK_NUMBER);
+    CHECK_STR(delf("**^h world**"), "^ **world**");
+    CHECK_STR(delf("*^h world*"), "^ *world*");
+    CHECK_INT(shown_type(), BLK_NORMAL);
+    CHECK_STR(delf("# ~~^h world~~"), "# ^ ~~world~~");
+    CHECK_STR(delf("- __^h world__"), "- ^ __world__");
+    /* In a quote the prefix takes the space, which is still drawn there. */
+    CHECK_STR(del("> **h^ world**"), ">  ^**world**");
+    CHECK_INT(shown_type(), BLK_QUOTE);
+    CHECK_INT(style_of('w'), ST_BOLD);
+    CHECK_STR(delf("> > ==^h world=="), "> >  ^==world==");
+    CHECK_INT(style_of('w'), ST_HL);
+    CHECK_STR(del("> **h^** world"), ">  ^world");
+    /* Only the run's own opener moves; the closer before it stays. */
+    CHECK_STR(del("~~c~~**h^ w**"), "~~c^~~ **w**");
+    CHECK_INT(style_of('c'), ST_STRIKE);
+    CHECK_INT(style_of('w'), ST_BOLD);
+
+    /* The closer that moves back is only the run's own: the next run keeps its opener. */
+    CHECK_STR(del("**a b^**~~c~~"), "**a** ^~~c~~");
+    CHECK_STR(shown(), "a ^c");
+    CHECK_INT(style_of('c'), ST_STRIKE);
+    CHECK_STR(del("**a b^***c*"), "**a** ^*c*");
+    CHECK_STR(shown(), "a ^c");
+    CHECK_INT(style_of('c'), ST_ITALIC);
+    CHECK_STR(del("**a b^**[c](u)"), "**a** ^[c](u)");
+    CHECK_STR(shown(), "a ^c");
+    CHECK_INT(style_of(' '), 0);                        /* the space is not link text */
+    CHECK_INT(style_of('c'), ST_LINK);
 }
 
 static void test_fe_split(void) {

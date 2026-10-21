@@ -96,16 +96,19 @@ static void render_free(Render *r) {
     memset(r, 0, sizeof *r);
 }
 
-static void render_of(const Para *p, Render *r) {
+/* The render of p from offset from (normally its content start). */
+static void render_from(const Para *p, int from, Render *r) {
     render_reserve(r, p->len);
     r->type = p->ps.type == BLK_EMPTY ? BLK_NORMAL : p->ps.type;
     r->n = 0;
-    for (int i = p->start; i < p->len; i++) {
+    for (int i = from; i < p->len; i++) {
         if (p->hid[i]) continue;
         r->b[r->n] = p->s[i];
         r->st[r->n++] = p->ps.style[i] & (FV_INLINE | ST_LINK);
     }
 }
+
+static void render_of(const Para *p, Render *r) { render_from(p, p->start, r); }
 
 /* Index in the render of offset off: the visible content bytes before it. */
 static int render_index(const Para *p, int off) {
@@ -361,17 +364,18 @@ static void edit_close(Edit *x) {
 /* ---- Candidates ---- */
 
 /* Candidate kinds. Typing: plain insert, move-closer, wrap and escape at spot c.
- * K_CUT: base without [c, d). K_BACK (move-closer back): the same cut, then the rest of the
- * hidden run after it, [d, n), moves in front of the whitespace before c.
- * K_MARKS: the restyle marker put in (or dropped) at spots c and d. */
-enum { K_PLAIN, K_MOVE, K_WRAP, K_ESCAPE, K_CUT, K_BACK, K_MARKS };
+ * K_CUT: base without [c, d). K_BACK (move-closer back): the same cut, then the start [d, e) of
+ * the hidden run after it moves in front of the whitespace before c. K_FWD (move-opener
+ * forward): the same cut, then the end [e, c) of the hidden run before it moves past the
+ * whitespace after d. K_MARKS: the restyle marker put in (or dropped) at spots c and d. */
+enum { K_PLAIN, K_MOVE, K_WRAP, K_ESCAPE, K_CUT, K_BACK, K_FWD, K_MARKS };
 
 /* K_MARKS flags: drop the marker that ends at c / starts at d instead of putting one in. */
 enum { M_DROP_C = 1, M_DROP_D = 2 };
 
-/* A candidate: kind, spots c and d, flags f and the text it is built from. Evaluation fills in
- * its canonical cursor. */
-typedef struct { int kind, c, d, f; const char *base; int cursor; } Cand;
+/* A candidate: kind, spots c and d, the end of the moved run e (K_BACK, K_FWD), flags f and the
+ * text it is built from. Evaluation fills in its canonical cursor. */
+typedef struct { int kind, c, d, e, f; const char *base; int cursor; } Cand;
 
 /* Checks a candidate passed. */
 enum { P_A = 1, P_B = 2, P_C = 4, P_MONO = 8 };
@@ -417,7 +421,7 @@ static int style_at(const Edit *x, int c) {
 }
 
 /* Writes the candidate's text to o->s. Returns the raw cursor: the offset right after the typed
- * text (typing), the cut point (K_CUT) or the end of the word (K_MARKS). */
+ * text (typing), the cut point (K_CUT, K_BACK, K_FWD) or the end of the word (K_MARKS). */
 static int cand_build(Edit *x, const Cand *cd) {
     const char *b = cd->base;
     int len = x->len, c = cd->c, d = cd->d, np = 0, raw;
@@ -437,13 +441,21 @@ static int cand_build(Edit *x, const Cand *cd) {
         pc[np++] = (Piece){ b + d, len - d };
         raw = c;
     } else if (cd->kind == K_BACK) {
-        /* b[0:k] + b[d:n] + b[k:c] + b[n:], where b[k:c] is whitespace; the cursor goes after it */
-        int k = ws_start(x, c);
+        /* b[0:k] + b[d:e] + b[k:c] + b[e:], where b[k:c] is whitespace; the cursor goes after it */
+        int k = ws_start(x, c), e = cd->e;
         pc[np++] = (Piece){ b, k };
-        pc[np++] = (Piece){ b + d, x->n - d };
+        pc[np++] = (Piece){ b + d, e - d };
         pc[np++] = (Piece){ b + k, c - k };
-        pc[np++] = (Piece){ b + x->n, len - x->n };
-        raw = c + x->n - d;
+        pc[np++] = (Piece){ b + e, len - e };
+        raw = c + e - d;
+    } else if (cd->kind == K_FWD) {
+        /* b[0:e] + b[d:w] + b[e:c] + b[w:], where b[d:w] is whitespace; the cursor goes before it */
+        int w = ws_end(x, d), e = cd->e;
+        pc[np++] = (Piece){ b, e };
+        pc[np++] = (Piece){ b + d, w - d };
+        pc[np++] = (Piece){ b + e, c - e };
+        pc[np++] = (Piece){ b + w, len - w };
+        raw = e;
     } else if (cd->kind == K_MARKS) {
         /* b[0:c] + MK + b[c:d] + MK + b[d:], without the marker ending at c / starting at d if dropped */
         int m = x->mlen, dc = cd->f & M_DROP_C, dd = cd->f & M_DROP_D, e = dd ? d + m : d;
@@ -517,7 +529,20 @@ static int insert_checks(Edit *x, const Cand *cd, int raw) {
     return f;
 }
 
-/* Delete and join checks on the parsed candidate (a cut or a move-closer back): exact (tier A),
+/* The render of a cut candidate. A quote's prefix takes every space after its '>', so spaces
+ * left at the start of a quote's content join the prefix, where they are still drawn: they are
+ * rendered with the content, from the old content start. */
+static void cut_render(Edit *x) {
+    const Para *c = &x->cur;
+    int from = c->start, i = x->old.start;
+    if (c->ps.type == BLK_QUOTE && x->old.ps.type == BLK_QUOTE && c->start > i) {
+        while (i < c->start && is_space(c->s[i]) && !c->hid[i]) i++;
+        if (i == c->start) from = x->old.start;
+    }
+    render_from(c, from, &x->got);
+}
+
+/* Delete and join checks on the parsed candidate (a cut, or a cut with a moved run): exact (tier A),
  * whitespace anywhere may have any style (tier B), and for the plain cut whether it only adds
  * formatting. */
 static int cut_checks(Edit *x, const Cand *cd) {
@@ -527,7 +552,7 @@ static int cut_checks(Edit *x, const Cand *cd) {
         Splice m = { cd->c, cd->d - cd->c, 0 };
         if (monotonic(&x->old, &x->cur, m)) f |= P_MONO;
     }
-    render_of(&x->cur, &x->got);
+    cut_render(x);
     if (render_match(&x->exp, &x->got, &ck)) return f | P_A | P_B;
     ck.new_len = x->exp.n;
     ck.new_ws_any = 1;
@@ -540,7 +565,7 @@ static int cand_eval(Edit *x, Cand *cd) {
     int raw = cand_build(x, cd);
     para_parse(&x->cur, x->o->s, x->o->len, x->in_code);
     cd->cursor = fv_snap(x->cur.s, x->cur.len, &x->cur.ps, x->cur.hid, raw);
-    if (cd->kind == K_CUT || cd->kind == K_BACK) return cut_checks(x, cd);
+    if (cd->kind == K_CUT || cd->kind == K_BACK || cd->kind == K_FWD) return cut_checks(x, cd);
     if (cd->kind == K_MARKS) {
         render_of(&x->cur, &x->got);
         return render_match(&x->exp, &x->got, &x->ck) ? P_A : 0;
@@ -597,33 +622,48 @@ static int cut_loses_link(const Edit *x, int c, int d) {
     return 0;
 }
 
-/* Can a move-closer-back candidate cut [c, d)? Only whitespace may be left between the run's
- * content and the rest of the hidden run after the cut, and something of that run must be left
- * to move. */
-static int back_ok(const Edit *x, int c, int d) {
+/* Can a move-closer-back candidate cut [c, d) and move [d, e), a start of the hidden run after
+ * the cut? Only whitespace may be left between the run's content and that hidden run. */
+static int back_ok(const Edit *x, int c, int e) {
     int k = ws_start(x, c);
-    return k < c && d < x->n && spot_ok(x, k, -1) && spot_ok(x, x->n, -1);
+    return k < c && spot_ok(x, k, -1) && spot_ok(x, e, -1);
+}
+
+/* Can a move-opener-forward candidate cut [c, d) and move [e, c), an end of the hidden run
+ * before the cut? Only whitespace may follow the cut. */
+static int fwd_ok(const Edit *x, int d, int e) {
+    int w = ws_end(x, d);
+    return d < w && spot_ok(x, e, -1) && spot_ok(x, w, -1);
 }
 
 /* Delete candidates built from base: cut [a - t, b + u) for t over the hidden run before a and
  * u over the hidden run after b, by t + u ascending. For an emptied run (the character is the
  * only visible byte between two hidden runs) by t + u descending, so its whole pair goes.
- * Then the move-closer-back candidates for the same cuts, in the same order: the rest of the
- * hidden run moves in front of the whitespace before the cut (its pass usually comes from tier
- * B, as that whitespace loses the style). A cut takes a link destination only with the whole
- * link that the delete empties. Returns 1 when one passes tier A. */
+ * Then for the same cuts, in the same order, the move-closer-back candidates (a start of the
+ * hidden run after the cut moves in front of the whitespace before it) and then the
+ * move-opener-forward ones (an end of the hidden run before the cut moves past the whitespace
+ * after it). The moved bytes are markers only, shortest first, so a run moves its own closer or
+ * opener and never the next run's opener or the previous run's closer. Their pass usually comes
+ * from tier B, as that whitespace loses the style. A cut takes a link destination only with the
+ * whole link that the delete empties. Returns 1 when one passes tier A. */
 static int try_cuts(Edit *x, const char *base, Tally *tl) {
-    static const int KINDS[] = { K_CUT, K_BACK };
+    static const int KINDS[] = { K_CUT, K_BACK, K_FWD };
     int np = x->a - x->p, nn = x->n - x->b, max = np + nn, emptied = np > 0 && nn > 0;
-    for (int kd = 0; kd < 2; kd++)
+    for (int kd = 0; kd < 3; kd++)
         for (int i = 0; i <= max; i++) {
-            int sum = emptied ? max - i : i;
+            int sum = emptied ? max - i : i, kind = KINDS[kd];
             for (int t = 0; t <= np; t++) {
                 int u = sum - t, c = x->a - t, d = x->b + u;
                 if (u < 0 || u > nn || !spot_ok(x, c, x->a) || !spot_ok(x, d, x->b) || cut_loses_link(x, c, d))
                     continue;
-                if (KINDS[kd] == K_BACK && !back_ok(x, c, d)) continue;
-                if (consider(x, (Cand){ .kind = KINDS[kd], .c = c, .d = d, .base = base }, tl)) return 1;
+                if (kind == K_CUT && consider(x, (Cand){ .kind = K_CUT, .c = c, .d = d, .base = base }, tl))
+                    return 1;
+                for (int e = d + 1; kind == K_BACK && e <= x->n && is_marker(x->s[e - 1]); e++)
+                    if (back_ok(x, c, e) && consider(x, (Cand){ .kind = K_BACK, .c = c, .d = d, .e = e, .base = base }, tl))
+                        return 1;
+                for (int e = c - 1; kind == K_FWD && e >= x->p && is_marker(x->s[e]); e--)
+                    if (fwd_ok(x, d, e) && consider(x, (Cand){ .kind = K_FWD, .c = c, .d = d, .e = e, .base = base }, tl))
+                        return 1;
             }
         }
     return 0;

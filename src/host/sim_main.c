@@ -577,7 +577,7 @@ int main(int argc, char **argv) {
         tap_back();
     }
 
-    printf("10c. Formatted editing: redraws\n");
+    printf("10c. Formatted editing: first words, redraws\n");
     {
         tap_slot(1);                    /* outline: a new quick note, empty */
         Doc *d = editor_sim_doc();
@@ -594,6 +594,16 @@ int main(int argc, char **argv) {
         char *t = saved_note();
         expect(t && !strncmp(t, "**one two", 9) && strstr(t, "thirty** and"), "the long phrase is saved bold");
         free(t);
+        /* Backspace over the whole first word of a bold phrase. */
+        key(KC_ENTER);
+        type_physical("**Important note**", LAYOUT_EN);
+        for (int i = 0; i < 5; i++) key(KC_LEFT);
+        for (int i = 0; i < 9; i++) key(KC_BACKSPACE);
+        t = saved_note();
+        expect(t && strstr(t, "\n **note**"), "Backspace over the first word of a bold phrase keeps the rest bold");
+        free(t);
+        expect(text_area_current() && editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(),
+               "no markup drawn after deleting the first word, cursor valid");
         tap_back();
     }
 
