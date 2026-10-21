@@ -200,23 +200,19 @@ int main(int argc, char **argv) {
            "Enter continues task lists and quotes, and ends them on an empty item");
     expect(note && strstr(note, "1. Opening\n2. Market scene\n\n---"), "numbered list continues with 2.");
     free(note);
-    shot("05-editor-keyboard");
     {
         char *cfgtxt = storage_read(cfg, NULL);
         expect(cfgtxt && strstr(cfgtxt, "source_view=1"), "Source view saved in settings");
         free(cfgtxt);
     }
-
-    printf("3. Tick a checkbox, formatting menu\n");
-    tap_slot(0);                        /* hide the keyboard so the whole note shows */
-    shot("06b-source-view");
-    expect(sim_count_rgb(COL_HIGHLIGHT) == 0, "no colour in Source view");
-    tap_slot(3);                        /* Source view off */
+    tap_slot(3);                        /* Source view off, keyboard still open */
     {
         char *cfgtxt = storage_read(cfg, NULL);
         expect(cfgtxt && strstr(cfgtxt, "source_view=0"), "Source view off saved in settings");
         free(cfgtxt);
     }
+
+    printf("3. Tick a checkbox, formatting menu\n");
     {
         int x, y;
         if (editor_sim_checkbox_point(3, &x, &y)) tap(x, y);
@@ -225,10 +221,16 @@ int main(int argc, char **argv) {
         expect(note && strstr(note, "- [x] Describe the market"), "tapping a checkbox ticks it");
         free(note);
     }
+    shot("05-editor-keyboard");
+    tap_slot(0);                        /* hide the keyboard so the whole note shows */
     shot("06-formatted-note");
     expect(editor_sim_drawn_markup() == 0, "no markup drawn in Formatted view");
     expect(sim_count_rgb(COL_HIGHLIGHT) > 500, "yellow highlight");
     expect(sim_count_rgb(COL_LINK) > 50, "blue link");
+    tap_slot(3);                        /* Source view on, for its shot */
+    shot("06b-source-view");
+    expect(sim_count_rgb(COL_HIGHLIGHT) == 0, "no colour in Source view");
+    tap_slot(3);                        /* Source view off again */
     key(KC_UP);
     tap_slot(2);
     shot("07-format-menu");
