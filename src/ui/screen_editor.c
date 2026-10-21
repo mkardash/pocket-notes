@@ -6,6 +6,7 @@
 #include "colors.h"
 #include "../core/book.h"
 #include "../core/doc.h"
+#include "../core/fmtedit.h"
 #include "../core/fmtview.h"
 #include "../core/layout.h"
 #include "../core/mdstyle.h"
@@ -36,6 +37,7 @@ static int render_ver = 1;              /* bump to re-layout everything (font, w
 static unsigned char *in_code = NULL;   /* per paragraph: inside a fenced code block */
 static int in_code_cap = 0;
 static int drawn_markup = 0;            /* ST_MARK bytes drawn as characters in the last full draw */
+static int type_style = 0;              /* Formatted view: inline style (FV_INLINE bits) typed text gets */
 
 /* ---------- geometry ---------- */
 
@@ -581,9 +583,12 @@ static void edit_end(EditMark m) {
     int cp0 = doc->cp;
     normalize_cursor();
     int moved = doc->cp != cp0;     /* the cursor left the edited paragraph */
+    clamp_top();
     if (m.before.p >= doc->n) { m.before.p = doc->n - 1; m.before.l = 0; }
     if (m.before.l >= lay(m.before.p)->n) m.before.l = lay(m.before.p)->n - 1;
-    if (fences || moved || ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
+    int above = pos_cmp(cursor_pos(), m.before) < 0;   /* the cursor went above the redrawn lines */
+    int scrolled = ensure_cursor_visible();
+    if (fences || moved || above || scrolled) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     Lay *l = lay(doc->cp);
     int to_bottom = doc->n != m.n0 || l->n != m.lines0 || l->lh != m.lh0 || (int)l->ps.type != m.type0;
     Pos end = { doc->cp, l->n - 1 };
@@ -593,10 +598,18 @@ static void edit_end(EditMark m) {
     update_auto_shift();
 }
 
-static void do_insert(const char *s) {
+/* Inserts the text byte for byte; '\n' splits paragraphs. */
+static void plain_insert(const char *s) {
     EditMark m = edit_begin();
     doc_insert(doc, s, (int)strlen(s));
     edit_end(m);
+}
+
+static void fmt_insert(const char *s);
+
+static void do_insert(const char *s) {
+    if (fmt()) fmt_insert(s);
+    else plain_insert(s);
 }
 
 static void do_edit_action(void (*fn)(Doc *)) {
@@ -633,9 +646,12 @@ static void append_empty_para(void) {
     mark_edited();
 }
 
+static void reset_type_style(void);
+
 /* Appends the empty paragraph, scrolls to it and redraws. */
 static void append_and_show(void) {
     append_empty_para();
+    reset_type_style();
     ensure_cursor_visible();
     full_text_redraw(UPD_FAST);
     update_auto_shift();
@@ -655,11 +671,21 @@ static void normalize_cursor(void) {
     doc_set_cursor(doc, doc->cp, fv_snap(p->s, p->len, &l->ps, l->hid, doc->co));
 }
 
+/* Formatted view: typed text takes the style of the visible character left of the cursor.
+ * Called whenever the cursor is placed other than by typing. */
+static void reset_type_style(void) {
+    if (!fmt()) { type_style = 0; return; }
+    Lay *l = lay(doc->cp);
+    Para *p = &doc->p[doc->cp];
+    type_style = fv_style_left(p->s, p->len, &l->ps, l->hid, doc->co);
+}
+
 static void move_cursor_to(int p, int o) {
     Pos old = cursor_pos();
     int n0 = doc->n;
     doc_set_cursor(doc, p, o);
     normalize_cursor();
+    reset_type_style();
     if (doc->n != n0) { ensure_cursor_visible(); full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     if (ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     Pos c = cursor_pos();
@@ -771,19 +797,40 @@ static void page_scroll(int dir) {
     }
     top_p = n.p; top_l = n.l;
     if (line_y(cursor_pos()) < 0) { doc_set_cursor(doc, n.p, lay(n.p)->lines[n.l].start); normalize_cursor(); }
+    reset_type_style();
     pref_x = -1;
     full_text_redraw(UPD_PARTIAL);
     update_auto_shift();
 }
 
+static int is_list_or_quote(BlockType t) {
+    return t == BLK_BULLET || t == BLK_NUMBER || t == BLK_TODO || t == BLK_DONE || t == BLK_QUOTE;
+}
+
+/* Prefix for the line after a list item or quote line s: the next number, an open task, or the
+ * same bullet or quote marker. */
+static void list_prefix(const ParaStyle *ps, const char *s, char prefix[64]) {
+    BlockType t = ps->type;
+    if (t == BLK_NUMBER) md_prefix_for(FMT_NUMBER, ps->bullet_off, ps->number + 1, prefix, 64);
+    else if (t == BLK_TODO || t == BLK_DONE) md_prefix_for(FMT_TODO, ps->bullet_off, 0, prefix, 64);
+    else {
+        int n = ps->marker_len < 60 ? ps->marker_len : 60;
+        memcpy(prefix, s, n);
+        prefix[n] = 0;
+    }
+}
+
+static void fmt_enter(void);
+
 /* Enter continues lists and quotes; on an empty item it ends the list instead. */
 static void do_enter(void) {
     if (zen()) { do_insert("\n"); return; }
+    if (fmt()) { fmt_enter(); return; }
     Lay *l = lay(doc->cp);
     ParaStyle ps = l->ps;
     Para *p = &doc->p[doc->cp];
     BlockType t = ps.type;
-    if (t != BLK_BULLET && t != BLK_NUMBER && t != BLK_TODO && t != BLK_DONE && t != BLK_QUOTE) {
+    if (!is_list_or_quote(t)) {
         do_insert("\n");
         return;
     }
@@ -795,13 +842,7 @@ static void do_enter(void) {
         return;
     }
     char prefix[64];
-    if (t == BLK_NUMBER) md_prefix_for(FMT_NUMBER, ps.bullet_off, ps.number + 1, prefix, sizeof prefix);
-    else if (t == BLK_TODO || t == BLK_DONE) md_prefix_for(FMT_TODO, ps.bullet_off, 0, prefix, sizeof prefix);
-    else {
-        int n = ps.marker_len < 60 ? ps.marker_len : 60;
-        memcpy(prefix, p->s, n);
-        prefix[n] = 0;
-    }
+    list_prefix(&ps, p->s, prefix);
     char text[80];
     snprintf(text, sizeof text, "\n%s", prefix);
     do_insert(text);
@@ -829,14 +870,17 @@ static int is_word_byte(unsigned char c) {
     return c >= 0x80 || (c >= '0' && c <= '9') || ((c | 32) >= 'a' && (c | 32) <= 'z') || c == '\'';
 }
 
-static void word_bounds(int *a, int *b) {
+/* The word around offset off of the cursor paragraph (a == b when there is none). */
+static void word_bounds_at(int off, int *a, int *b) {
     Para *p = &doc->p[doc->cp];
-    int s = doc->co, e = doc->co;
+    int s = off, e = off;
     while (s > 0 && is_word_byte((unsigned char)p->s[s - 1])) s--;
     while (e < p->len && is_word_byte((unsigned char)p->s[e])) e++;
     *a = s;
     *b = e;
 }
+
+static void word_bounds(int *a, int *b) { word_bounds_at(doc->co, a, b); }
 
 static void apply_inline(const char *mk) {
     Para *p = &doc->p[doc->cp];
@@ -924,8 +968,8 @@ static void apply_indent(int dir) {
 
 static void insert_divider(void) {
     Para *p = &doc->p[doc->cp];
-    if (p->len == 0) do_insert("---\n");
-    else { doc_set_cursor(doc, doc->cp, p->len); do_insert("\n---\n"); }
+    if (p->len == 0) plain_insert("---\n");
+    else { doc_set_cursor(doc, doc->cp, p->len); plain_insert("\n---\n"); }
 }
 
 static void insert_code_block(void) {
@@ -937,6 +981,365 @@ static void insert_code_block(void) {
     doc_insert(doc, "```\n", 4);
     doc_set_cursor(doc, cp + 1, co);
     edit_end(m);
+}
+
+/* ---------- Formatted view editing ----------
+ * In Formatted view every edit goes through fmtedit, so no Markdown symbol shows and no marker
+ * pair breaks. Code block lines are plain text and keep the plain edits. Lines with nothing
+ * visible (dividers, fences, table rules) get the boundary rules below. Source and Zen views
+ * never come here. */
+
+static FeOut fe;                /* fmtedit results, reused by every edit */
+
+/* Is paragraph p a line inside a fenced code block? */
+static int code_at(int p) { return in_code && p < in_code_cap ? in_code[p] : 0; }
+
+/* Paragraph insert and delete that keep the first visible line in place. */
+static void ins_para(int i, const char *s, int len) {
+    doc_insert_para(doc, i, s, len);
+    if (i < top_p) top_p++;
+}
+
+static void del_para(int i) {
+    int n0 = doc->n;
+    doc_delete_para(doc, i);
+    if (doc->n < n0 && i < top_p) top_p--;
+}
+
+/* Replaces paragraph i with a copy of s. doc_set_para must never read from the paragraph it
+ * replaces. */
+static void set_para_copy(int i, const char *s, int len) {
+    char *t = malloc(len + 1);
+    memcpy(t, s, len);
+    doc_set_para(doc, i, t, len);
+    free(t);
+}
+
+/* Closing fence for the fence line s: its indent and its run of ` or ~. Returns the length. */
+static int closing_fence(const char *s, int len, char out[64]) {
+    int i = md_indent(s, len), j = i;
+    while (j < len && j < 63 && s[j] == s[i]) j++;
+    memcpy(out, s, j);
+    out[j] = 0;
+    return j;
+}
+
+/* Visible content bytes of paragraph p before offset off. */
+static int vis_count(int p, int off) {
+    Lay *l = lay(p);
+    int v = 0;
+    for (int i = fv_content_start(&l->ps); i < off; i++) v += !l->hid[i];
+    return v;
+}
+
+/* Canonical offset in paragraph p after v visible content bytes. */
+static int vis_offset(int p, int v) {
+    Lay *l = lay(p);
+    Para *pp = &doc->p[p];
+    int i = fv_content_start(&l->ps);
+    while (i < pp->len && v > 0) v -= !l->hid[i++];
+    return fv_snap(pp->s, pp->len, &l->ps, l->hid, i);
+}
+
+/* Types t[0..n) (no '\n') at the cursor in the typing style. A line that becomes a divider,
+ * table rule or fence hides at once, so the cursor moves to a new empty line below it; a fence
+ * also gets its closing fence. */
+static void fmt_type(const char *t, int n) {
+    int cp = doc->cp, newline = 0;
+    EditMark m = edit_begin();
+    if (code_at(cp)) {
+        doc_insert(doc, t, n);
+    } else {
+        Para *p = &doc->p[cp];
+        fe_insert(p->s, p->len, 0, doc->co, t, n, type_style, &fe);
+        doc_set_para(doc, cp, fe.s, fe.len);
+        doc_set_cursor(doc, cp, fe.cursor);
+        BlockType bt = lay(cp)->ps.type;
+        if (bt == BLK_FENCE) {
+            char close[64];
+            int cl = closing_fence(doc->p[cp].s, doc->p[cp].len, close);
+            ins_para(cp + 1, close, cl);
+        }
+        if (bt == BLK_HR || bt == BLK_TABLE_RULE || bt == BLK_FENCE) {
+            ins_para(cp + 1, "", 0);
+            doc_set_cursor(doc, cp + 1, 0);
+            newline = 1;
+        }
+    }
+    edit_end(m);
+    if (newline) reset_type_style();
+}
+
+/* Text with '\n' goes in one line at a time, with Enter between. */
+static void fmt_insert(const char *s) {
+    for (;;) {
+        const char *nl = strchr(s, '\n');
+        int n = nl ? (int)(nl - s) : (int)strlen(s);
+        if (n) fmt_type(s, n);
+        if (!nl) return;
+        do_enter();
+        s = nl + 1;
+    }
+}
+
+/* Enter. An empty last code line leaves the block. An empty list item or quote line ends the
+ * list. At the start of a text line or heading an empty line goes above, and the text keeps its
+ * format. Otherwise the line splits, styled runs are closed and reopened, and lists and quotes
+ * continue on the new line. */
+static void fmt_enter(void) {
+    int cp = doc->cp;
+    Para *p = &doc->p[cp];
+    EditMark m = edit_begin();
+    if (code_at(cp)) {
+        if (p->len == 0 && cp + 1 < doc->n && md_is_fence(doc->p[cp + 1].s, doc->p[cp + 1].len)) {
+            del_para(cp);               /* the closing fence moves up to cp */
+            ins_para(cp + 1, "", 0);
+            doc_set_cursor(doc, cp + 1, 0);
+        } else {
+            doc_insert(doc, "\n", 1);
+        }
+        edit_end(m);
+        reset_type_style();
+        return;
+    }
+    Lay *l = lay(cp);
+    BlockType t = l->ps.type;
+    int cs = fv_content_start(&l->ps);
+    if (is_list_or_quote(t) && p->len <= l->ps.marker_len) {
+        doc_set_para(doc, cp, "", 0);
+        doc_set_cursor(doc, cp, 0);
+    } else if (!is_list_or_quote(t) && doc->co == cs && p->len > cs) {
+        ins_para(cp, "", 0);            /* the cursor stays with the text */
+    } else {
+        char prefix[64] = "";
+        if (is_list_or_quote(t)) list_prefix(&l->ps, p->s, prefix);
+        fe_split(p->s, p->len, 0, doc->co, &fe);
+        int pl = (int)strlen(prefix);
+        char *right = malloc(pl + fe.len2 + 1);
+        memcpy(right, prefix, pl);
+        memcpy(right + pl, fe.s2, fe.len2);
+        doc_set_para(doc, cp, fe.s, fe.len);
+        ins_para(cp + 1, right, pl + fe.len2);
+        free(right);
+        doc_set_cursor(doc, cp + 1, pl);
+    }
+    edit_end(m);
+    reset_type_style();
+}
+
+/* Backspace. Inside a line it removes the visible character before the cursor. At the start of
+ * a line: a heading, quote or list item becomes a plain paragraph; a divider above is deleted;
+ * at the first line of a code block both fences go; after a code block or table rule the line
+ * never joins it (an empty line is deleted, and the cursor goes to the last visible line above);
+ * otherwise the line joins the one above. */
+static void fmt_backspace(void) {
+    int cp = doc->cp;
+    Para *p = &doc->p[cp];
+    EditMark m = edit_begin();
+    if (code_at(cp)) {
+        if (doc->co == 0 && cp > 0 && md_is_fence(doc->p[cp - 1].s, doc->p[cp - 1].len)) {
+            int q = cp + 1;
+            while (q < doc->n && !md_is_fence(doc->p[q].s, doc->p[q].len)) q++;
+            if (q < doc->n) del_para(q);
+            del_para(cp - 1);
+        } else {
+            doc_backspace(doc);
+        }
+    } else {
+        Lay *l = lay(cp);
+        int cs = fv_content_start(&l->ps);
+        if (doc->co > cs && fe_delete_back(p->s, p->len, 0, doc->co, &fe)) {
+            doc_set_para(doc, cp, fe.s, fe.len);
+            doc_set_cursor(doc, cp, fe.cursor);
+        } else if (cs > 0) {
+            set_para_copy(cp, p->s + cs, p->len - cs);
+            doc_set_cursor(doc, cp, 0);
+        } else if (cp == 0) {
+            return;
+        } else {
+            BlockType pt = lay(cp - 1)->ps.type;
+            if (pt == BLK_HR) {
+                del_para(cp - 1);
+            } else if (pt == BLK_FENCE || pt == BLK_TABLE_RULE) {
+                int q = visible_before(cp);
+                if (q < 0) return;
+                if (p->len > 0) { move_cursor_to(q, doc->p[q].len); return; }
+                del_para(cp);
+                doc_set_cursor(doc, q, doc->p[q].len);
+            } else {
+                Para *a = &doc->p[cp - 1];
+                fe_join(a->s, a->len, p->s, p->len, &fe);
+                doc_set_para(doc, cp - 1, fe.s, fe.len);
+                del_para(cp);
+                doc_set_cursor(doc, cp - 1, fe.cursor);
+            }
+        }
+    }
+    edit_end(m);
+    reset_type_style();
+}
+
+/* Delete. Inside a line it removes the visible character after the cursor. At the end of a
+ * line: a divider below is deleted; next to a fence or table rule nothing is deleted and the
+ * cursor moves to the next visible line; otherwise the next line joins this one without its
+ * block prefix. */
+static void fmt_delete(void) {
+    int cp = doc->cp, nx = cp + 1 < doc->n ? cp + 1 : -1;
+    Para *p = &doc->p[cp];
+    EditMark m = edit_begin();
+    if (code_at(cp)) {
+        if (doc->co < p->len || nx < 0 || !md_is_fence(doc->p[nx].s, doc->p[nx].len)) {
+            doc_delete_forward(doc);
+            edit_end(m);
+            reset_type_style();
+            return;
+        }
+    } else {
+        Lay *l = lay(cp);
+        int v = doc->co;
+        while (v < p->len && l->hid[v]) v++;
+        if (v < p->len && fe_delete_forward(p->s, p->len, 0, doc->co, &fe)) {
+            doc_set_para(doc, cp, fe.s, fe.len);
+            doc_set_cursor(doc, cp, fe.cursor);
+            edit_end(m);
+            reset_type_style();
+            return;
+        }
+    }
+    if (nx < 0) return;
+    BlockType nt = lay(nx)->ps.type;
+    if (nt == BLK_FENCE || nt == BLK_TABLE_RULE) {
+        int q = visible_after(cp);
+        if (q >= 0) move_cursor_to(q, fv_content_start(&lay(q)->ps));
+        return;
+    }
+    if (nt == BLK_HR) {
+        del_para(nx);
+    } else {
+        Para *b = &doc->p[nx];
+        fe_join(p->s, p->len, b->s, b->len, &fe);
+        doc_set_para(doc, cp, fe.s, fe.len);
+        del_para(nx);
+        doc_set_cursor(doc, cp, fe.cursor);
+    }
+    edit_end(m);
+    reset_type_style();
+}
+
+/* B menu inline style. On a word (visible word characters on both sides of the cursor) the
+ * whole visible word gets or loses the style, and the cursor stays on the same character; when
+ * that can't be done safely the text is left as it is. Elsewhere the style is turned on or off
+ * for what is typed next. */
+static void fmt_inline(int bit) {
+    int cp = doc->cp, co = doc->co;
+    Para *p = &doc->p[cp];
+    Lay *l = lay(cp);
+    int cs = fv_content_start(&l->ps), a = co - 1, b = co;
+    while (a >= cs && l->hid[a]) a--;
+    while (b < p->len && l->hid[b]) b++;
+    if (a < cs || b >= p->len || !is_word_byte((unsigned char)p->s[a]) || !is_word_byte((unsigned char)p->s[b])) {
+        type_style ^= bit;
+        return;
+    }
+    /* Widen to the whole visible word; hidden bytes inside it don't end it. */
+    for (int i = a - 1; i >= cs; i--) {
+        if (l->hid[i]) continue;
+        if (!is_word_byte((unsigned char)p->s[i])) break;
+        a = i;
+    }
+    for (int i = b + 1; i < p->len; i++) {
+        if (l->hid[i]) continue;
+        if (!is_word_byte((unsigned char)p->s[i])) break;
+        b = i;
+    }
+    if (!fe_restyle(p->s, p->len, code_at(cp), a, b + 1, bit, &fe)) return;
+    int v = vis_count(cp, co);
+    EditMark m = edit_begin();
+    doc_set_para(doc, cp, fe.s, fe.len);
+    doc_set_cursor(doc, cp, vis_offset(cp, v));
+    edit_end(m);
+    reset_type_style();
+}
+
+/* Visible content bytes of s in Formatted view, written to out (len bytes or more). */
+static int visible_text(const char *s, int len, int code, char *out) {
+    static ParaStyle ps;
+    static unsigned char *hid;
+    static int cap;
+    md_parse(s, len, code, &ps);
+    if (cap < len + 1) { cap = len + 64; hid = realloc(hid, cap); }
+    fv_hidden(s, len, &ps, hid);
+    int n = 0;
+    for (int i = fv_content_start(&ps); i < len; i++) if (!hid[i]) out[n++] = s[i];
+    return n;
+}
+
+/* Writes p's text with [text](url) put in at offset at in place of cut bytes. Returns the length. */
+static int with_link(char *out, const Para *p, int at, int cut, const char *text, int tl, const char *url, int ul) {
+    int n = at, rest = p->len - at - cut;
+    memcpy(out, p->s, at);
+    out[n++] = '[';
+    memcpy(out + n, text, tl);
+    n += tl;
+    out[n++] = ']';
+    out[n++] = '(';
+    memcpy(out + n, url, ul);
+    n += ul;
+    out[n++] = ')';
+    memcpy(out + n, p->s + at + cut, rest);
+    return n + rest;
+}
+
+/* B menu link, once the address is typed (NULL when cancelled). On a word (its edges count) the
+ * word becomes the link text; elsewhere the address goes in as its own link text. The result
+ * must show exactly the expected characters, so nothing happens where a link can't go (inside
+ * another link, in a code line). */
+static void link_entered(const char *url, void *ctx) {
+    if (!doc || !url || !url[0]) return;
+    int cp = doc->cp, co = doc->co, code = code_at(cp), ul = (int)strlen(url), a, b, h = co, ok = 0, n = 0, end = 0;
+    Para *p = &doc->p[cp];
+    Lay *l = lay(cp);
+    while (h < p->len && l->hid[h]) h++;            /* the hidden bytes at the cursor */
+    word_bounds_at(co, &a, &b);
+    if (a == b) word_bounds_at(h, &a, &b);
+    int v = vis_count(cp, co), cap = p->len + 2 * ul + 8;
+    char *cand = malloc(cap), *want = malloc(cap), *got = malloc(cap);
+    int wn = visible_text(p->s, p->len, code, want);
+    if (a < b) {
+        n = with_link(cand, p, a, b - a, p->s + a, b - a, url, ul);
+        end = n - (p->len - b);
+        ok = visible_text(cand, n, code, got) == wn && !memcmp(got, want, wn);
+    } else {
+        memmove(want + v + ul, want + v, wn - v);
+        memcpy(want + v, url, ul);
+        wn += ul;
+        for (int c = co; c <= h && !ok; c++) {
+            if (c < p->len && ((unsigned char)p->s[c] & 0xC0) == 0x80) continue;
+            n = with_link(cand, p, c, 0, url, ul, url, ul);
+            end = c + 2 * ul + 4;
+            ok = visible_text(cand, n, code, got) == wn && !memcmp(got, want, wn);
+        }
+    }
+    if (ok) {
+        EditMark m = edit_begin();
+        doc_set_para(doc, cp, cand, n);
+        doc_set_cursor(doc, cp, end);
+        edit_end(m);
+        reset_type_style();
+    }
+    free(cand);
+    free(want);
+    free(got);
+}
+
+static void inline_style(const char *mk, int bit) {
+    if (fmt()) fmt_inline(bit);
+    else apply_inline(mk);
+}
+
+static void link_chosen(void) {
+    if (fmt()) popup_prompt(T(S_LINK_URL), "", link_entered, NULL);
+    else apply_link();
 }
 
 enum {
@@ -954,14 +1357,14 @@ static void format_chosen(int idx, void *ctx) {
     case F_NUMBER: apply_block(FMT_NUMBER); break;
     case F_TODO: apply_block(FMT_TODO); break;
     case F_QUOTE: apply_block(FMT_QUOTE); break;
-    case F_CODEBLOCK: insert_code_block(); break;
-    case F_BOLD: apply_inline("**"); break;
-    case F_ITALIC: apply_inline("*"); break;
-    case F_STRIKE: apply_inline("~~"); break;
-    case F_HIGHLIGHT: apply_inline("=="); break;
-    case F_CODE: apply_inline("`"); break;
-    case F_LINK: apply_link(); break;
-    case F_DIVIDER: insert_divider(); break;
+    case F_CODEBLOCK: insert_code_block(); reset_type_style(); break;
+    case F_BOLD: inline_style("**", ST_BOLD); break;
+    case F_ITALIC: inline_style("*", ST_ITALIC); break;
+    case F_STRIKE: inline_style("~~", ST_STRIKE); break;
+    case F_HIGHLIGHT: inline_style("==", ST_HL); break;
+    case F_CODE: inline_style("`", ST_CODE); break;
+    case F_LINK: link_chosen(); break;
+    case F_DIVIDER: insert_divider(); reset_type_style(); break;
     case F_INDENT: apply_indent(1); break;
     case F_OUTDENT: apply_indent(-1); break;
     }
@@ -1028,12 +1431,14 @@ static void toggle_keyboard(void) {
 static void toggle_source(void) {
     g_settings.source_view = !g_settings.source_view;
     apply_view_change();
+    reset_type_style();
     app_redraw(UPD_FULL);
 }
 
 static void toggle_zen(void) {
     g_settings.zen = !g_settings.zen;
     apply_view_change();
+    reset_type_style();
     app_redraw(UPD_FULL);
 }
 
@@ -1058,6 +1463,7 @@ void editor_open(const char *project_dir, const char *doc_path, int para, int of
     doc_set_cursor(doc, para, off);
     relayout_all();
     normalize_cursor();
+    reset_type_style();
     backed_up = 0;
     save_failed = 0;
     pref_x = -1;
@@ -1073,6 +1479,7 @@ void editor_open(const char *project_dir, const char *doc_path, int para, int of
 static void enter(void) {
     relayout_all();
     normalize_cursor();
+    reset_type_style();
     clamp_top();
     /* Open with the cursor a third of the way down. */
     Pos n = back_from(cursor_pos(), text_rect().h / 3);
@@ -1284,8 +1691,8 @@ static void text_input(const char *s) {
 static void action(Action a) {
     if (!doc) return;
     switch (a) {
-    case ACT_BACKSPACE: do_edit_action(doc_backspace); break;
-    case ACT_DELETE: do_edit_action(doc_delete_forward); break;
+    case ACT_BACKSPACE: if (fmt()) fmt_backspace(); else do_edit_action(doc_backspace); break;
+    case ACT_DELETE: if (fmt()) fmt_delete(); else do_edit_action(doc_delete_forward); break;
     case ACT_ENTER: do_enter(); break;
     case ACT_LEFT: cursor_step(-1); break;
     case ACT_RIGHT: cursor_step(1); break;

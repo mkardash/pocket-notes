@@ -136,6 +136,12 @@ static int exists_rel(const char *rel) {
     return stat(p, &st) == 0;
 }
 
+/* The note open in the editor, as saved after the autosave delay. Caller frees. */
+static char *saved_note(void) {
+    sim_advance(5000);
+    return storage_read(g_settings.last_doc, NULL);
+}
+
 static void new_project(const char *template_label, const char *name) {
     tap_slot(0);
     tap_menu(template_label);
@@ -351,10 +357,127 @@ int main(int argc, char **argv) {
         tap_slot(0);
         tap_back();
         /* Typing a divider as the last line hides it at once. */
-        tap_slot(5);
+        tap_slot(1);                    /* outline: quick note */
         type_physical("abc\n---", LAYOUT_EN);
         expect(editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(), "typed divider is not drawn and the cursor is valid");
         sim_advance(5000);
+        tap_back();
+    }
+
+    printf("10. Formatted editing\n");
+    {
+        tap_slot(1);                    /* outline: a new quick note, empty */
+        char *cfgtxt = storage_read(cfg, NULL);
+        if (cfgtxt && strstr(cfgtxt, "source_view=1")) tap_slot(3);   /* Formatted view */
+        free(cfgtxt);
+        tap_slot(2);
+        tap_menu("Bold");
+        type_physical("hello world", LAYOUT_EN);
+        tap_slot(2);
+        tap_menu("Bold");
+        type_physical(" plain", LAYOUT_EN);
+        char *t = saved_note();
+        expect(t && strstr(t, "**hello world** plain"), "Bold with no word turns bold on, then off, for typing");
+        free(t);
+        key(KC_ENTER);
+        type_physical("# Title", LAYOUT_EN);
+        key(KC_HOME);
+        key(KC_BACKSPACE);
+        t = saved_note();
+        expect(t && strstr(t, "\nTitle") && !strstr(t, "# Title"), "Backspace at the start of a heading makes it a paragraph");
+        free(t);
+        key(KC_END);
+        key(KC_ENTER);
+        type_physical("---", LAYOUT_EN);
+        type_physical("after", LAYOUT_EN);
+        t = saved_note();
+        expect(t && strstr(t, "\n---\nafter"), "a typed divider moves the cursor to a new line below it");
+        free(t);
+        key(KC_ENTER);
+        type_physical("```", LAYOUT_EN);
+        t = saved_note();
+        expect(t && strstr(t, "```\n\n```"), "a typed fence becomes a whole code block");
+        free(t);
+        /* PageUp only scrolls, and this note fits on screen: Up walks to the first line. */
+        key(KC_PAGEUP);
+        Doc *d = editor_sim_doc();
+        for (int i = 0; i < 40 && (d->cp > 0 || d->co > 0); i++) key(KC_UP);
+        key(KC_HOME);
+        for (int i = 0; i < 3; i++) key(KC_RIGHT);
+        key(KC_ENTER);
+        t = saved_note();
+        expect(t && strstr(t, "**hel**\n**lo world**"), "Enter splits a bold run into two bold runs");
+        free(t);
+        key(KC_END);
+        tap_slot(2);
+        tap_menu("Link");
+        type_physical("map.md", LAYOUT_EN);
+        key(KC_ENTER);
+        t = saved_note();
+        expect(t && strstr(t, "**lo world** [plain](map.md)"), "Link on a word asks for the address and links the word");
+        free(t);
+        app_redraw(UPD_FULL);
+        app_flush();
+        shot("15-formatted-editing");
+        expect(editor_sim_drawn_markup() == 0, "no markup drawn after editing in Formatted view");
+        expect(editor_sim_cursor_ok(), "cursor is valid after editing");
+        tap_back();
+    }
+
+    printf("10b. Formatted editing at line boundaries\n");
+    {
+        tap_slot(1);                    /* outline: a new quick note, empty */
+        type_physical("one", LAYOUT_EN);
+        key(KC_ENTER);
+        type_physical("---", LAYOUT_EN);
+        type_physical("two", LAYOUT_EN);
+        key(KC_HOME);
+        key(KC_BACKSPACE);
+        char *t = saved_note();
+        expect(t && !strcmp(t, "one\ntwo"), "Backspace after a divider deletes the divider");
+        free(t);
+        key(KC_BACKSPACE);
+        key(KC_END);
+        key(KC_ENTER);
+        type_physical("---", LAYOUT_EN);
+        type_physical("three", LAYOUT_EN);
+        key(KC_UP);
+        key(KC_END);
+        key(KC_DELETE);
+        t = saved_note();
+        expect(t && !strcmp(t, "onetwo\nthree"), "Backspace joins lines; Delete before a divider deletes it");
+        free(t);
+        key(KC_DOWN);
+        key(KC_END);
+        key(KC_ENTER);
+        type_physical("```", LAYOUT_EN);
+        type_physical("code", LAYOUT_EN);
+        key(KC_ENTER);
+        key(KC_ENTER);
+        type_physical("after", LAYOUT_EN);
+        t = saved_note();
+        expect(t && strstr(t, "```\ncode\n```\nafter"), "Enter on an empty last code line leaves the block");
+        free(t);
+        key(KC_HOME);
+        key(KC_BACKSPACE);
+        Doc *d = editor_sim_doc();
+        expect(d->p[d->cp].len == 4 && d->co == 4, "Backspace after a code block goes to its last line, joining nothing");
+        key(KC_HOME);
+        key(KC_BACKSPACE);
+        t = saved_note();
+        expect(t && !strcmp(t, "onetwo\nthree\ncode\nafter"), "Backspace at the first code line removes both fences");
+        free(t);
+        key(KC_PAGEUP);
+        for (int i = 0; i < 10 && (d->cp > 0 || d->co > 0); i++) key(KC_UP);
+        key(KC_RIGHT);
+        key(KC_RIGHT);
+        tap_slot(2);
+        tap_menu("Italic");
+        type_physical("X", LAYOUT_EN);
+        t = saved_note();
+        expect(t && !strcmp(t, "*onXetwo*\nthree\ncode\nafter"), "Italic on a word styles it and keeps the cursor in place");
+        free(t);
+        expect(editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(), "no markup drawn, cursor valid");
         tap_back();
     }
 

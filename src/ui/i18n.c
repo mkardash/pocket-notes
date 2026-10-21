@@ -66,6 +66,7 @@ static const char *uk[S_COUNT] = {
     [S_FMT_DIVIDER] = "Розділювач",
     [S_FMT_INDENT] = "Відступ →",
     [S_FMT_OUTDENT] = "← Відступ",
+    [S_LINK_URL] = "Адреса посилання",
 };
 
 static const char *en[S_COUNT] = {
@@ -133,6 +134,7 @@ static const char *en[S_COUNT] = {
     [S_FMT_DIVIDER] = "Divider",
     [S_FMT_INDENT] = "Indent →",
     [S_FMT_OUTDENT] = "← Outdent",
+    [S_LINK_URL] = "Link address",
 };
 
 static const char **table = en;
