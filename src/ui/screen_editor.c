@@ -831,11 +831,11 @@ static int is_list_or_quote(BlockType t) {
     return t == BLK_BULLET || t == BLK_NUMBER || t == BLK_TODO || t == BLK_DONE || t == BLK_QUOTE;
 }
 
-/* Prefix for the line after a list item or quote line s: the next number, an open task, or the
- * same bullet or quote marker. */
-static void list_prefix(const ParaStyle *ps, const char *s, char prefix[64]) {
+/* Prefix for a new line next to a list item or quote line s: an open task, the same bullet or
+ * quote marker, or the item's number plus step (1 for the line after it, 0 for one above). */
+static void list_prefix(const ParaStyle *ps, const char *s, int step, char prefix[64]) {
     BlockType t = ps->type;
-    if (t == BLK_NUMBER) md_prefix_for(FMT_NUMBER, ps->bullet_off, ps->number + 1, prefix, 64);
+    if (t == BLK_NUMBER) md_prefix_for(FMT_NUMBER, ps->bullet_off, ps->number + step, prefix, 64);
     else if (t == BLK_TODO || t == BLK_DONE) md_prefix_for(FMT_TODO, ps->bullet_off, 0, prefix, 64);
     else {
         int n = ps->marker_len < 60 ? ps->marker_len : 60;
@@ -866,7 +866,7 @@ static void do_enter(void) {
         return;
     }
     char prefix[64];
-    list_prefix(&ps, p->s, prefix);
+    list_prefix(&ps, p->s, 1, prefix);
     char text[80];
     snprintf(text, sizeof text, "\n%s", prefix);
     do_insert(text);
@@ -1106,16 +1106,23 @@ static void fmt_insert(const char *s) {
     }
 }
 
-/* Enter. An empty last code line leaves the block. An empty list item or quote line ends the
- * list. At the start of a text line or heading an empty line goes above, and the text keeps its
- * format. Otherwise the line splits, styled runs are closed and reopened, and lists and quotes
- * continue on the new line. */
+/* Enter. On the only line of a code block, when it is empty, both fences go and an empty line
+ * is left. An empty last code line leaves the block. An empty list item or quote line ends the
+ * list. At the start of a text line or heading an empty line goes above, and at the start of a
+ * list item or quote line an empty item of the same kind (a task unticked, a numbered item with
+ * the same number); the line keeps its text and format. Otherwise the line splits, styled runs
+ * are closed and reopened, and lists and quotes continue on the new line. */
 static void fmt_enter(void) {
     int cp = doc->cp;
     Para *p = &doc->p[cp];
     EditMark m = edit_begin();
     if (code_at(cp)) {
-        if (p->len == 0 && cp + 1 < doc->n && md_is_fence(doc->p[cp + 1].s, doc->p[cp + 1].len)) {
+        int fence_after = cp + 1 < doc->n && md_is_fence(doc->p[cp + 1].s, doc->p[cp + 1].len);
+        if (p->len == 0 && fence_after && cp > 0 && md_is_fence(doc->p[cp - 1].s, doc->p[cp - 1].len)) {
+            del_para(cp + 1);
+            del_para(cp - 1);           /* the empty line moves up to cp - 1 */
+            doc_set_cursor(doc, cp - 1, 0);
+        } else if (p->len == 0 && fence_after) {
             del_para(cp);               /* the closing fence moves up to cp */
             ins_para(cp + 1, "", 0);
             doc_set_cursor(doc, cp + 1, 0);
@@ -1132,11 +1139,13 @@ static void fmt_enter(void) {
     if (is_list_or_quote(t) && p->len <= l->ps.marker_len) {
         doc_set_para(doc, cp, "", 0);
         doc_set_cursor(doc, cp, 0);
-    } else if (!is_list_or_quote(t) && doc->co == cs && p->len > cs) {
-        ins_para(cp, "", 0);            /* the cursor stays with the text */
+    } else if (doc->co == cs && p->len > cs) {
+        char prefix[64] = "";
+        if (is_list_or_quote(t)) list_prefix(&l->ps, p->s, 0, prefix);
+        ins_para(cp, prefix, (int)strlen(prefix));   /* the cursor stays with the text */
     } else {
         char prefix[64] = "";
-        if (is_list_or_quote(t)) list_prefix(&l->ps, p->s, prefix);
+        if (is_list_or_quote(t)) list_prefix(&l->ps, p->s, 1, prefix);
         fe_split(p->s, p->len, 0, doc->co, &fe);
         int pl = (int)strlen(prefix);
         char *right = malloc(pl + fe.len2 + 1);

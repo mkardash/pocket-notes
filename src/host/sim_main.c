@@ -577,7 +577,7 @@ int main(int argc, char **argv) {
         tap_back();
     }
 
-    printf("10c. Formatted editing: first words, redraws\n");
+    printf("10c. Formatted editing: first words, list items, empty code blocks, redraws\n");
     {
         tap_slot(1);                    /* outline: a new quick note, empty */
         Doc *d = editor_sim_doc();
@@ -604,6 +604,54 @@ int main(int argc, char **argv) {
         free(t);
         expect(text_area_current() && editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(),
                "no markup drawn after deleting the first word, cursor valid");
+        /* Enter at the start of a list item puts a new empty item above and leaves the item as it is. */
+        key(KC_END);
+        key(KC_ENTER);
+        type_physical("- [x] done task", LAYOUT_EN);
+        key(KC_HOME);
+        key(KC_ENTER);
+        t = saved_note();
+        expect(t && strstr(t, "\n- [ ] \n- [x] done task"), "Enter at the start of a done task keeps the tick on the task");
+        free(t);
+        expect(!strcmp(d->p[d->cp].s, "- [x] done task") && d->co == 6, "the cursor stays at the start of the task");
+        key(KC_END);
+        key(KC_ENTER);
+        key(KC_ENTER);                  /* an empty item ends the list */
+        type_physical("3. third", LAYOUT_EN);
+        key(KC_HOME);
+        key(KC_ENTER);
+        t = saved_note();
+        expect(t && strstr(t, "\n3. \n3. third"), "Enter at the start of a numbered item keeps its number");
+        free(t);
+        key(KC_END);
+        key(KC_ENTER);
+        key(KC_ENTER);
+        type_physical("- bullet", LAYOUT_EN);
+        key(KC_HOME);
+        key(KC_ENTER);
+        t = saved_note();
+        expect(t && strstr(t, "\n- \n- bullet"), "Enter at the start of a bullet puts an empty bullet above");
+        free(t);
+        key(KC_END);
+        key(KC_ENTER);
+        key(KC_ENTER);
+        type_physical("> quoted", LAYOUT_EN);
+        key(KC_HOME);
+        key(KC_ENTER);
+        t = saved_note();
+        expect(t && strstr(t, "\n> \n> quoted"), "Enter at the start of a quote line puts an empty quote line above");
+        free(t);
+        /* Enter on the only line of a code block, when it is empty, removes the block. */
+        key(KC_END);
+        key(KC_ENTER);
+        key(KC_ENTER);
+        type_physical("```", LAYOUT_EN);
+        key(KC_ENTER);
+        type_physical("after", LAYOUT_EN);
+        t = saved_note();
+        expect(t && !strstr(t, "```") && strstr(t, "> quoted\nafter"), "Enter in an empty code block removes both fences");
+        free(t);
+        expect(text_area_current() && editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(), "no markup drawn, cursor valid");
         tap_back();
     }
 
