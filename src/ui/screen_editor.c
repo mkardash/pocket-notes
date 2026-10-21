@@ -3,8 +3,10 @@
  * typing pauses. Lines can differ in height (headings), so positions are found by walking lines. */
 #include "app.h"
 #include "osk.h"
+#include "colors.h"
 #include "../core/book.h"
 #include "../core/doc.h"
+#include "../core/fmtview.h"
 #include "../core/layout.h"
 #include "../core/mdstyle.h"
 #include "../core/storage.h"
@@ -19,8 +21,6 @@
 #define REPEAT_FIRST_MS 450
 #define REPEAT_NEXT_MS 90
 #define HISTORY_KEEP 20
-#define CODE_BG 0xEEEEEE
-#define HIGHLIGHT_BG 0xDDDDDD
 
 static char e_project[1024], e_path[1024], e_title[512];
 static Doc *doc = NULL;
@@ -35,6 +35,7 @@ static int needs_clean = 0;
 static int render_ver = 1;              /* bump to re-layout everything (font, width, mode) */
 static unsigned char *in_code = NULL;   /* per paragraph: inside a fenced code block */
 static int in_code_cap = 0;
+static int drawn_markup = 0;            /* ST_MARK bytes drawn as characters in the last full draw */
 
 /* ---------- geometry ---------- */
 
@@ -82,6 +83,8 @@ typedef struct {
     unsigned gen;
     int code, ver;
     ParaStyle ps;
+    unsigned char *hid;     /* per byte: 1 = not drawn in Formatted view, zero width */
+    int hid_cap;
     ifont *font;            /* main font of the paragraph */
     int lh, space_before;
     int first_x, rest_x, first_w, rest_w;
@@ -93,7 +96,7 @@ static Lay *cache = NULL;
 static int cache_size = 0, cache_used = 0;
 
 static void cache_clear(void) {
-    for (int i = 0; i < cache_size; i++) { free(cache[i].lines); md_free(&cache[i].ps); }
+    for (int i = 0; i < cache_size; i++) { free(cache[i].lines); free(cache[i].hid); md_free(&cache[i].ps); }
     free(cache);
     cache = NULL;
     cache_size = cache_used = 0;
@@ -131,9 +134,10 @@ static int measure_styled(void *ctx, const char *s, int len) {
     const Lay *l = m->lay;
     int off = (int)(s - m->base), w = 0, i = 0;
     while (i < len) {
+        if (l->hid[off + i]) { i++; continue; }   /* hidden bytes have no width */
         ifont *f = font_for(l, l->ps.style[off + i]);
         int j = i + 1;
-        while (j < len && font_for(l, l->ps.style[off + j]) == f) j++;
+        while (j < len && !l->hid[off + j] && font_for(l, l->ps.style[off + j]) == f) j++;
         SetFont(f, BLACK);
         w += measure_current(NULL, s + i, j - i);
         i = j;
@@ -161,10 +165,15 @@ static void compute_layout(Lay *l, int p) {
     } else {
         md_parse(para->s, para->len, l->code, &l->ps);
     }
+    if (l->hid_cap < para->len + 1) { l->hid_cap = para->len + 64; l->hid = realloc(l->hid, l->hid_cap); }
+    memset(l->hid, 0, para->len + 1);
+    if (fmt()) fv_hidden(para->s, para->len, &l->ps, l->hid);
     l->font = font_for(l, 0);
     BlockType t = l->ps.type;
     l->lh = l->font->height * 135 / 100;
     l->space_before = 0;
+    if (fmt() && l->ps.type == BLK_FENCE) l->lh = f_text->height / 3;
+    if (fmt() && l->ps.type == BLK_TABLE_RULE) l->lh = f_text->height / 2;
     if (src()) {   /* raw text: no hanging indent, first-line indent or heading spacing */
         l->first_x = l->rest_x = 0;
         l->first_w = l->rest_w = W;
@@ -270,15 +279,15 @@ static Pos back_from(Pos c, int height) {
 
 /* ---------- drawing ---------- */
 
-static void draw_checkbox(int x, int w, int base, ifont *f, int checked) {
+static void draw_checkbox(int x, int w, int base, ifont *f, int checked, int tick) {
     int s = f->height * 60 / 100;
     if (s > w) s = w;
     int bx = x + (w - s) / 2, by = base - f->baseline + (f->height - s) / 2 + f->height / 12;
     for (int i = 0; i < 3; i++) DrawRect(bx + i, by + i, s - 2 * i, s - 2 * i, BLACK);
     if (checked) {
         for (int t = -2; t <= 2; t++) {
-            DrawLine(bx + s / 5, by + s / 2 + t, bx + s * 2 / 5, by + s * 3 / 4 + t, BLACK);
-            DrawLine(bx + s * 2 / 5, by + s * 3 / 4 + t, bx + s * 4 / 5, by + s / 4 + t, BLACK);
+            DrawLine(bx + s / 5, by + s / 2 + t, bx + s * 2 / 5, by + s * 3 / 4 + t, tick);
+            DrawLine(bx + s * 2 / 5, by + s * 3 / 4 + t, bx + s * 4 / 5, by + s / 4 + t, tick);
         }
     }
 }
@@ -294,25 +303,29 @@ static void draw_line(Pos a, int y) {
     int h = line_h(a);
     BlockType t = L->ps.type;
     int styled = fmt();
-    FillArea(tr.x - 12, y, tr.w + 24, h, styled && (t == BLK_CODE || t == BLK_FENCE) ? CODE_BG : WHITE);
+    FillArea(tr.x - 12, y, tr.w + 24, h, styled && (t == BLK_CODE || t == BLK_FENCE) ? COL_CODE_BG : WHITE);
     LineSpan sp = L->lines[a.l];
     int cy = y + (a.l == 0 ? L->space_before : 0);
     int lh = L->lh;
     ifont *mf = L->font;
     int base = cy + (lh - mf->height) / 2 + mf->baseline;
     int x0 = line_x(a);
-    int editing_here = doc->cp == a.p;
 
     if (styled && t == BLK_HR) {
         FillArea(tr.x, cy + lh / 2 - 1, tr.w, 3, DGRAY);
-        if (!editing_here) return;   /* show the dashes only while editing that line */
+        return;
     }
+    if (styled && t == BLK_TABLE_RULE) {
+        FillArea(tr.x, cy + lh / 2 - 1, tr.w, 2, DGRAY);
+        return;
+    }
+    if (styled && t == BLK_FENCE) return;   /* just the tinted strip */
     if (styled && t == BLK_QUOTE) {
         /* A bar for each '>' of the marker, on every line of the paragraph. */
         for (int i = 0; i < L->ps.marker_len; i++) {
             if (para->s[i] != '>') continue;
             int bx = tr.x + width_of(L, a.p, 0, i) + width_of(L, a.p, i, i + 1) / 2;
-            FillArea(bx - 2, y, 5, h, DGRAY);
+            FillArea(bx - 2, y, 5, h, COL_QUOTE);
         }
     }
 
@@ -320,11 +333,19 @@ static void draw_line(Pos a, int y) {
     int x = x0, i = sp.start, end = sp.start + sp.len;
     while (i < end) {
         unsigned char st = L->ps.style[i];
+        if (L->hid[i]) { i++; continue; }   /* hidden bytes take no room */
+        if (styled && t == BLK_TABLE && para->s[i] == '|' && (st & ST_MARK)) {
+            int pw = width_of(L, a.p, i, i + 1);
+            FillArea(x + pw / 2 - 1, cy, 2, lh, DGRAY);
+            x += pw;
+            i++;
+            continue;
+        }
         if (styled && a.l == 0) {
             if ((t == BLK_TODO || t == BLK_DONE) && i == L->ps.bullet_off) {
                 int box_end = L->ps.box_off + 3;
                 int lead = width_of(L, a.p, i, L->ps.box_off), bw = width_of(L, a.p, L->ps.box_off, box_end);
-                draw_checkbox(x + lead, bw, base, mf, t == BLK_DONE);
+                draw_checkbox(x + lead, bw, base, mf, t == BLK_DONE, COL_TICK);
                 x += lead + bw;
                 i = box_end;
                 continue;
@@ -346,7 +367,8 @@ static void draw_line(Pos a, int y) {
         }
         /* A run of bytes with the same style. */
         int j = i + 1;
-        while (j < end && L->ps.style[j] == st) {
+        while (j < end && L->ps.style[j] == st && !L->hid[j]) {
+            if (styled && t == BLK_TABLE && para->s[j] == '|' && (st & ST_MARK)) break;
             if (styled && a.l == 0 && is_list_marker_start(L, t, j)) break;
             if (styled && t == BLK_QUOTE && j < L->ps.marker_len && para->s[j] == '>') break;
             j++;
@@ -354,16 +376,20 @@ static void draw_line(Pos a, int y) {
         ifont *f = font_for(L, st);
         int color = BLACK;
         if (styled) {
-            if (st & ST_MARK) color = (t == BLK_NUMBER && j <= L->ps.marker_len) ? DGRAY : LGRAY;
-            else if (t == BLK_DONE) color = DGRAY;
+            if (st & ST_LINK) color = COL_LINK;
+            else if (t == BLK_DONE && !(st & ST_MARK)) color = DGRAY;
+            if ((st & ST_MARK) && !(t == BLK_NUMBER && j <= L->ps.marker_len)) {
+                /* Prefix spaces (after a bullet or '>') are gaps, not visible markup. */
+                for (int k = i; k < j; k++) if (para->s[k] != ' ') drawn_markup++;
+            }
         }
         int len = j - i < (int)sizeof buf - 1 ? j - i : (int)sizeof buf - 1;
         memcpy(buf, para->s + i, len);
         buf[len] = 0;
         SetFont(f, color);
         int w = StringWidth(buf);
-        if (styled && (st & ST_HL)) FillArea(x, cy + 4, w, lh - 8, HIGHLIGHT_BG);
-        if (styled && (st & ST_CODE) && t != BLK_CODE) FillArea(x - 2, cy + 6, w + 4, lh - 12, CODE_BG);
+        if (styled && (st & ST_HL)) FillArea(x, cy + 4, w, lh - 8, COL_HIGHLIGHT);
+        if (styled && (st & ST_CODE) && t != BLK_CODE) FillArea(x - 2, cy + 6, w + 4, lh - 12, COL_CODE_BG);
         SetFont(f, color);
         DrawString(x, base - f->baseline, buf);
         if (styled && ((st & ST_STRIKE) || (t == BLK_DONE && !(st & ST_MARK) && i >= L->ps.marker_len)))
@@ -388,6 +414,7 @@ static Rect draw_range(Pos from, const Pos *to) {
     int y = line_y(from);
     if (y < 0) return rect_make(0, 0, 0, 0);
     int y0 = y, bottom = tr.y + tr.h;
+    if (!to) drawn_markup = 0;
     Pos a = from;
     for (;;) {
         int h = line_h(a);
@@ -586,7 +613,6 @@ static void move_cursor_to(int p, int o) {
     if (ensure_cursor_visible()) { full_text_redraw(UPD_FAST); update_auto_shift(); return; }
     Pos c = cursor_pos();
     Rect a = rect_make(0, 0, 0, 0), b = rect_make(0, 0, 0, 0);
-    /* A divider shows its dashes only while the cursor is on it: redraw the whole paragraph then. */
     if (line_y(old) >= 0) a = draw_range(old, &old);
     if (pos_cmp(c, old) != 0 && line_y(c) >= 0) b = draw_range(c, &c);
     if (a.h) app_update(a, UPD_FAST);
@@ -1206,6 +1232,7 @@ Screen screen_editor = { enter, draw, pointer, device_key, text_input, action, l
 Osk *editor_sim_osk(void) { return &osk; }
 Doc *editor_sim_doc(void) { return doc; }
 /* Screen point of a task's checkbox (paragraph p). Returns 0 if not visible. */
+int editor_sim_drawn_markup(void) { return drawn_markup; }
 int editor_sim_checkbox_point(int p, int *x, int *y) {
     Pos a = { p, 0 };
     Lay *l = lay(p);

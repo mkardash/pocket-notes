@@ -6,6 +6,7 @@
 #include "../core/doc.h"
 #include "../core/storage.h"
 #include "../ui/osk.h"
+#include "../ui/colors.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@ int popup_sim_item(const char *text, int *x, int *y);
 Osk *editor_sim_osk(void);
 Doc *editor_sim_doc(void);
 int editor_sim_checkbox_point(int p, int *x, int *y);
+int editor_sim_drawn_markup(void);
 
 static char out_dir[512], root[600], cfg[600];
 const char *sim_root(void) { return root; }
@@ -183,7 +185,7 @@ int main(int argc, char **argv) {
                   "1. Opening\n"
                   "Market scene\n\n\n"
                   "---\n"
-                  "The rain started again before noon, and the market emptied street by street.", LAYOUT_EN);
+                  "The rain started again before noon, and the market emptied street by street. See [the map](map.md).", LAYOUT_EN);
     sim_advance(5000);
     char *note = read_rel("The Grey City/01 Chapter 1/01 Scene 1.md");
     expect(note && strstr(note, "- [ ] Describe the market\n- [ ] Name the old cat\n\n> Every city has a colour.\n\nMotifs"),
@@ -200,6 +202,7 @@ int main(int argc, char **argv) {
     printf("3. Tick a checkbox, formatting menu\n");
     tap_slot(0);                        /* hide the keyboard so the whole note shows */
     shot("06b-source-view");
+    expect(sim_count_rgb(COL_HIGHLIGHT) == 0, "no colour in Source view");
     tap_slot(3);                        /* Source view off */
     {
         char *cfgtxt = storage_read(cfg, NULL);
@@ -215,6 +218,9 @@ int main(int argc, char **argv) {
         free(note);
     }
     shot("06-formatted-note");
+    expect(editor_sim_drawn_markup() == 0, "no markup drawn in Formatted view");
+    expect(sim_count_rgb(COL_HIGHLIGHT) > 500, "yellow highlight");
+    expect(sim_count_rgb(COL_LINK) > 50, "blue link");
     key(KC_UP);
     tap_slot(2);
     shot("07-format-menu");

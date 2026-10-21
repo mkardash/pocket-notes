@@ -1,4 +1,4 @@
-/* Host implementation of the inkview subset: draws into an 8-bit grayscale framebuffer
+/* Host implementation of the inkview subset: draws into an RGB framebuffer
  * with stb_truetype, so the simulator can save screens as PNG files. */
 #include "inkview.h"
 #include "sim.h"
@@ -14,7 +14,7 @@
 #define W 1264
 #define H 1680
 
-static unsigned char fb[W * H];
+static unsigned char fb[W * H * 3];
 static int clip_x = 0, clip_y = 0, clip_w = W, clip_h = H;
 static const ifont *cur_font = NULL;
 static int cur_color = BLACK;
@@ -23,15 +23,13 @@ int sim_closed = 0;
 
 /* ---- framebuffer ---- */
 
-static unsigned char gray(int color) {
-    int r = (color >> 16) & 255, g = (color >> 8) & 255, b = color & 255;
-    return (unsigned char)((r * 299 + g * 587 + b * 114) / 1000);
-}
-
-static void put(int x, int y, unsigned char v) {
+static void put(int x, int y, int color) {
     if (x < clip_x || y < clip_y || x >= clip_x + clip_w || y >= clip_y + clip_h) return;
     if (x < 0 || y < 0 || x >= W || y >= H) return;
-    fb[y * W + x] = v;
+    unsigned char *p = fb + (y * W + x) * 3;
+    p[0] = (unsigned char)(color >> 16);
+    p[1] = (unsigned char)(color >> 8);
+    p[2] = (unsigned char)color;
 }
 
 int ScreenWidth() { return W; }
@@ -40,8 +38,7 @@ void ClearScreen() { memset(fb, 255, sizeof fb); }
 void SetClip(int x, int y, int w, int h) { clip_x = x; clip_y = y; clip_w = w; clip_h = h; }
 
 void FillArea(int x, int y, int w, int h, int color) {
-    unsigned char v = gray(color);
-    for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) put(i, j, v);
+    for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) put(i, j, color);
 }
 
 void DrawRect(int x, int y, int w, int h, int color) {
@@ -52,10 +49,9 @@ void DrawRect(int x, int y, int w, int h, int color) {
 }
 
 void DrawLine(int x1, int y1, int x2, int y2, int color) {
-    unsigned char v = gray(color);
     int dx = abs(x2 - x1), dy = -abs(y2 - y1), sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1, err = dx + dy;
     for (;;) {
-        put(x1, y1, v);
+        put(x1, y1, color);
         if (x1 == x2 && y1 == y2) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x1 += sx; }
@@ -66,7 +62,8 @@ void DrawLine(int x1, int y1, int x2, int y2, int color) {
 void InvertArea(int x, int y, int w, int h) {
     for (int j = y; j < y + h; j++)
         for (int i = x; i < x + w; i++)
-            if (i >= 0 && j >= 0 && i < W && j < H) fb[j * W + i] = 255 - fb[j * W + i];
+            if (i >= 0 && j >= 0 && i < W && j < H)
+                for (int c = 0; c < 3; c++) fb[(j * W + i) * 3 + c] = 255 - fb[(j * W + i) * 3 + c];
 }
 
 /* ---- fonts ---- */
@@ -185,7 +182,7 @@ int StringWidth(const char *s) {
 void DrawString(int x, int y, const char *s) {
     if (!cur_font) return;
     FontData *d = cur_font->fdata;
-    unsigned char ink = gray(cur_color);
+    int ink[3] = { (cur_color >> 16) & 255, (cur_color >> 8) & 255, cur_color & 255 };
     int base = y + d->ascent;
     while (*s) {
         Glyph *g = glyph(d, next_cp(&s));
@@ -196,8 +193,8 @@ void DrawString(int x, int y, const char *s) {
                 int px = x + g->xoff + i, py = base + g->yoff + j;
                 if (px < 0 || py < 0 || px >= W || py >= H) continue;
                 if (px < clip_x || py < clip_y || px >= clip_x + clip_w || py >= clip_y + clip_h) continue;
-                unsigned char bg = fb[py * W + px];
-                fb[py * W + px] = (unsigned char)((bg * (255 - a) + ink * a) / 255);
+                unsigned char *q = fb + (py * W + px) * 3;
+                for (int c = 0; c < 3; c++) q[c] = (unsigned char)((q[c] * (255 - a) + ink[c] * a) / 255);
             }
         x += g->adv;
     }
@@ -252,5 +249,13 @@ void CloseApp() { sim_closed = 1; }
 void InkViewMain(iv_handler h) { (void)h; }
 
 int sim_save_png(const char *path) {
-    return stbi_write_png(path, W, H, 1, fb, W) ? 0 : -1;
+    return stbi_write_png(path, W, H, 3, fb, W * 3) ? 0 : -1;
+}
+
+int sim_count_rgb(int rgb) {
+    unsigned char r = (unsigned char)(rgb >> 16), g = (unsigned char)(rgb >> 8), b = (unsigned char)rgb;
+    int n = 0;
+    for (int i = 0; i < W * H; i++)
+        if (fb[i * 3] == r && fb[i * 3 + 1] == g && fb[i * 3 + 2] == b) n++;
+    return n;
 }
