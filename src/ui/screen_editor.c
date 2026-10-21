@@ -561,12 +561,32 @@ static void mark_edited(void) {
 
 static void normalize_cursor(void);
 
-typedef struct { Pos before; int n0, lines0, lh0, type0; } EditMark;
+typedef struct { Pos before; unsigned above; int n0, lines0, lh0, type0; } EditMark;
+
+/* Formatted view: a hash of what lines [0, l) of paragraph p show (block type, each visible
+ * byte with its style, and where the lines break). An edit can restyle text before the cursor
+ * line, as when a typed closer bolds a whole phrase, and those lines must then be redrawn. */
+static unsigned shown_hash(int p, int l) {
+    Lay *L = lay(p);
+    const char *s = doc->p[p].s;
+    unsigned h = 2166136261u;
+#define MIX(v) (h = (h ^ (unsigned)(v)) * 16777619u)
+    MIX(L->ps.type);
+    MIX(L->ps.level);
+    for (int k = 0; k < l && k < L->n; k++) {
+        for (int i = L->lines[k].start; i < L->lines[k].start + L->lines[k].len; i++)
+            if (!L->hid[i]) { MIX((unsigned char)s[i]); MIX(L->ps.style[i]); }
+        MIX(0x100);         /* a line break */
+    }
+#undef MIX
+    return h;
+}
 
 static EditMark edit_begin(void) {
     EditMark m;
     m.before = cursor_pos();
     pos_prev(&m.before);    /* wrapping can pull a word up one line */
+    m.above = fmt() ? shown_hash(m.before.p, m.before.l) : 0;
     Lay *l = lay(doc->cp);
     m.n0 = doc->n;
     m.lines0 = l->n;
@@ -576,7 +596,8 @@ static EditMark edit_begin(void) {
 }
 
 /* Redraws after an edit: from the line above the old cursor line to the end of the cursor's
- * paragraph, or to the bottom when paragraphs or line counts/heights changed. */
+ * paragraph, or to the bottom when paragraphs or line counts/heights changed. In Formatted view
+ * the redraw starts at that paragraph's first line when the lines above it show something else. */
 static void edit_end(EditMark m) {
     pref_x = -1;
     mark_edited();
@@ -585,6 +606,8 @@ static void edit_end(EditMark m) {
     normalize_cursor();
     int moved = doc->cp != cp0;     /* the cursor left the edited paragraph */
     clamp_top();
+    if (fmt() && m.before.l > 0 && m.before.p < doc->n && shown_hash(m.before.p, m.before.l) != m.above)
+        m.before.l = 0;
     if (m.before.p >= doc->n) { m.before.p = doc->n - 1; m.before.l = 0; }
     if (m.before.l >= lay(m.before.p)->n) m.before.l = lay(m.before.p)->n - 1;
     int above = pos_cmp(cursor_pos(), m.before) < 0;   /* the cursor went above the redrawn lines */
@@ -1821,8 +1844,18 @@ int editor_sim_cursor_ok(void) {
     Lay *l = lay(doc->cp);
     return !fv_para_hidden(&l->ps) && fv_snap(doc->p[doc->cp].s, doc->p[doc->cp].len, &l->ps, l->hid, doc->co) == doc->co;
 }
-/* Screen point of a task's checkbox (paragraph p). Returns 0 if not visible. */
 int editor_sim_drawn_markup(void) { return drawn_markup; }
+/* Line height of the cursor's paragraph. */
+int editor_sim_line_height(void) { return lay(doc->cp)->lh; }
+/* The area the note's lines are drawn in. */
+void editor_sim_text_area(int *x, int *y, int *w, int *h) {
+    Rect tr = text_rect();
+    *x = tr.x - 12;
+    *y = tr.y;
+    *w = tr.w + 24;
+    *h = tr.h;
+}
+/* Screen point of a task's checkbox (paragraph p). Returns 0 if not visible. */
 int editor_sim_checkbox_point(int p, int *x, int *y) {
     Pos a = { p, 0 };
     Lay *l = lay(p);

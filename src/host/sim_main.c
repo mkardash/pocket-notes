@@ -21,6 +21,8 @@ int editor_sim_drawn_markup(void);
 int editor_sim_cursor_ok(void);
 int editor_sim_cursor_visible(void);
 int editor_sim_layout(void);
+void editor_sim_text_area(int *x, int *y, int *w, int *h);
+int editor_sim_line_height(void);
 int osk_sim_variant_point(Osk *k, const char *text, int *x, int *y);
 
 static char out_dir[512], root[600], cfg[600];
@@ -142,6 +144,21 @@ static int exists_rel(const char *rel) {
 static char *saved_note(void) {
     sim_advance(5000);
     return storage_read(g_settings.last_doc, NULL);
+}
+
+/* Hash of what the editor's text area shows now. */
+static unsigned text_area_hash(void) {
+    int x, y, w, h;
+    editor_sim_text_area(&x, &y, &w, &h);
+    return sim_fb_hash(x, y, w, h);
+}
+
+/* Does the text area show the same as after a full redraw? Leaves the full redraw on screen. */
+static int text_area_current(void) {
+    unsigned shown = text_area_hash();
+    app_redraw(UPD_FULL);
+    app_flush();
+    return text_area_hash() == shown;
 }
 
 static void new_project(const char *template_label, const char *name) {
@@ -557,6 +574,26 @@ int main(int argc, char **argv) {
         expect(t && !strcmp(t, "*onXetwo*\nthree\ncode\nafter"), "Italic on a word styles it and keeps the cursor in place");
         free(t);
         expect(editor_sim_drawn_markup() == 0 && editor_sim_cursor_ok(), "no markup drawn, cursor valid");
+        tap_back();
+    }
+
+    printf("10c. Formatted editing: redraws\n");
+    {
+        tap_slot(1);                    /* outline: a new quick note, empty */
+        Doc *d = editor_sim_doc();
+        /* A bold phrase over several lines, typed by hand: the closer bolds every line at once. */
+        type_physical("**one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+                      "fifteen sixteen seventeen eighteen nineteen twenty twentyone twentytwo twentythree "
+                      "twentyfour twentyfive twentysix thirty*", LAYOUT_EN);
+        type_physical("*", LAYOUT_EN);
+        expect(text_area_current(), "typing the closer of a long bold phrase redraws every line it changes");
+        expect(editor_sim_drawn_markup() == 0, "no markup drawn after the closer of a long bold phrase");
+        type_physical(" and", LAYOUT_EN);
+        expect(d->co > 200 && sim_last_update_h <= 2 * editor_sim_line_height() && text_area_current(),
+               "an ordinary letter still redraws only the cursor line and the one above");
+        char *t = saved_note();
+        expect(t && !strncmp(t, "**one two", 9) && strstr(t, "thirty** and"), "the long phrase is saved bold");
+        free(t);
         tap_back();
     }
 

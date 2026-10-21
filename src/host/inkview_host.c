@@ -19,6 +19,7 @@ static int clip_x = 0, clip_y = 0, clip_w = W, clip_h = H;
 static const ifont *cur_font = NULL;
 static int cur_color = BLACK;
 int sim_update_count = 0;
+int sim_last_update_h = 0;
 int sim_closed = 0;
 
 /* ---- framebuffer ---- */
@@ -201,12 +202,12 @@ void DrawString(int x, int y, const char *s) {
 }
 
 /* ---- screen updates (counted only) ---- */
-void FullUpdate() { sim_update_count++; }
-void SoftUpdate() { sim_update_count++; }
-void PartialUpdate(int x, int y, int w, int h) { sim_update_count++; }
-void PartialUpdateBW(int x, int y, int w, int h) { sim_update_count++; }
-void DynamicUpdate(int x, int y, int w, int h) { sim_update_count++; }
-void DynamicUpdateBW(int x, int y, int w, int h) { sim_update_count++; }
+void FullUpdate() { sim_update_count++; sim_last_update_h = H; }
+void SoftUpdate() { sim_update_count++; sim_last_update_h = H; }
+void PartialUpdate(int x, int y, int w, int h) { sim_update_count++; sim_last_update_h = h; }
+void PartialUpdateBW(int x, int y, int w, int h) { sim_update_count++; sim_last_update_h = h; }
+void DynamicUpdate(int x, int y, int w, int h) { sim_update_count++; sim_last_update_h = h; }
+void DynamicUpdateBW(int x, int y, int w, int h) { sim_update_count++; sim_last_update_h = h; }
 
 /* ---- timers (virtual clock driven by the simulator) ---- */
 typedef struct { iv_timerproc proc; long long due; } Timer;
@@ -250,6 +251,17 @@ void InkViewMain(iv_handler h) { (void)h; }
 
 int sim_save_png(const char *path) {
     return stbi_write_png(path, W, H, 3, fb, W * 3) ? 0 : -1;
+}
+
+unsigned sim_fb_hash(int x, int y, int w, int h) {
+    unsigned hash = 2166136261u;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > W) w = W - x;
+    if (y + h > H) h = H - y;
+    for (int j = y; j < y + h; j++)
+        for (int i = x * 3; i < (x + w) * 3; i++) hash = (hash ^ fb[j * W * 3 + i]) * 16777619u;
+    return hash;
 }
 
 int sim_count_rgb(int rgb) {
