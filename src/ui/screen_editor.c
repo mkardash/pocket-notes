@@ -425,7 +425,7 @@ static void draw(void) {
         draw_icon(ICON_KEYBOARD, zen_kb_rect(), LGRAY);
         draw_icon(ICON_ZEN_EXIT, zen_exit_rect(), LGRAY);
     } else {
-        draw_header(e_title, ICON_BACK, 5);
+        draw_header(e_title, ICON_BACK, 6);
         draw_icon(ICON_KEYBOARD, header_slot(SLOT_KEYBOARD), BLACK);
         if (own_kb()) FillArea(header_slot(SLOT_KEYBOARD).x + 24, g_header_h - 14, g_header_h - 48, 5, BLACK);
         draw_icon(ICON_SETTINGS, header_slot(SLOT_SETTINGS), BLACK);
