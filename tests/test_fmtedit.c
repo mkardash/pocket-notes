@@ -146,6 +146,25 @@ static const char *join(const char *a, const char *b) {
     return with_cursor();
 }
 
+/* Do both halves of the last split show no markup character, with every visible letter
+ * styled bits? */
+static int halves_clean(int bits) {
+    const char *t[2] = { out.s, out.s2 };
+    int n[2] = { out.len, out.len2 }, ok = 1;
+    for (int h = 0; h < 2; h++) {
+        unsigned char hid[512];
+        ParaStyle ps = {0};
+        md_parse(t[h], n[h], 0, &ps);
+        fv_hidden(t[h], n[h], &ps, hid);
+        for (int i = fv_content_start(&ps); i < n[h]; i++) {
+            if (hid[i] || t[h][i] == ' ') continue;
+            if (strchr("*_~=`[]()", t[h][i]) || (ps.style[i] & bits) != bits) ok = 0;
+        }
+        md_free(&ps);
+    }
+    return ok;
+}
+
 /* Toggles bit on the visible bytes [a, b) of s: returns the new text, or "(none)". */
 static const char *restyle(const char *s, int a, int b, int bit) {
     if (!fe_restyle(s, (int)strlen(s), 0, a, b, bit, &out)) return "(none)";
@@ -187,6 +206,14 @@ static void test_fe_delete(void) {
     CHECK_INT(out.cursor, 0);
     fe_parse_count = 0; del_long_plain(4000); CHECK(fe_parse_count <= 2); /* 4 KB plain paragraph */
     CHECK_INT(out.len, 3999); CHECK_INT(out.cursor, 3999);
+
+    /* The first letter of a new word in a styled run: the closer moves back before the space. */
+    CHECK_STR(del("**hello w^**"), "**hello** ^");
+    CHECK_STR(shown(), "hello ^");
+    CHECK_STR(del("**a b^**"), "**a** ^");
+    CHECK_STR(del("*a b^*"), "*a* ^");
+    CHECK_STR(delf("**hello ^w**"), "**hello** ^");
+    CHECK_STR(del("**a *b^***"), "**a** ^");        /* the inner run goes, the outer closer moves back */
 }
 
 static void test_fe_split(void) {
@@ -201,6 +228,16 @@ static void test_fe_split(void) {
     CHECK_STR(split("# He^ad"), "# He/ad");
     CHECK_STR(split("ab^"), "ab/");
     CHECK_STR(split("[a](u)^[b](v)"), "[a](u)/[b](v)");   /* between two links */
+    /* Next to whitespace in a styled run: closers before it on the left, openers after it on the right. */
+    CHECK_STR(split("**hello^ world**"), "**hello**/ **world**");
+    CHECK(halves_clean(ST_BOLD));
+    CHECK_STR(split("**hello ^world**"), "**hello** /**world**");
+    CHECK(halves_clean(ST_BOLD));
+    CHECK_STR(split("*a^ b*"), "*a*/ *b*");
+    CHECK(halves_clean(ST_ITALIC));
+    /* After a link in a styled run: the opener run "**[" is trimmed to its marker prefix "**". */
+    CHECK_STR(split("**[li^nk](u) x**"), "**[link](u)**/ **x**");
+    CHECK(halves_clean(ST_BOLD));
     /* Typing after a split makes one paragraph again. */
     ins("a^", "b", 0);
     CHECK_INT(out.len2, 0);
@@ -225,6 +262,8 @@ static void test_fe_restyle(void) {
 
     CHECK_STR(restyle("*word*", 1, 5, ST_ITALIC), "word");
     CHECK_STR(restyle("a word", 2, 6, ST_STRIKE), "a ~~word~~");
+    CHECK_STR(restyle("_word_", 1, 5, ST_ITALIC), "word");       /* R1 on the '_'→'*' text */
+    CHECK_STR(restyle("__word__", 2, 6, ST_BOLD), "word");
     /* No candidate renders right (markers are literal in a code block): o stays as it was. */
     CHECK_STR(join("a", "b"), "a^b");
     CHECK_INT(fe_restyle("word", 4, 1, 0, 4, ST_BOLD, &out), 0);

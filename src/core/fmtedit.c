@@ -265,6 +265,18 @@ static int run_end(const Edit *x, int i) {
     return i;
 }
 
+/* Start of the visible whitespace that ends at c (within the content). */
+static int ws_start(const Edit *x, int c) {
+    while (c > x->old.start && is_space(x->s[c - 1]) && !x->old.hid[c - 1]) c--;
+    return c;
+}
+
+/* End of the visible whitespace that starts at c. */
+static int ws_end(const Edit *x, int c) {
+    while (c < x->len && is_space(x->s[c]) && !x->old.hid[c]) c++;
+    return c;
+}
+
 /* The last visible content byte before off, or start - 1 when there is none. */
 static int vis_before(const Edit *x, int off) {
     int i = (off > x->len ? x->len : off) - 1;
@@ -327,8 +339,10 @@ static void edit_close(Edit *x) {
 /* ---- Candidates ---- */
 
 /* Candidate kinds. Typing: plain insert, move-closer, wrap and escape at spot c.
- * K_CUT: base without [c, d). K_MARKS: the restyle marker put in (or dropped) at spots c and d. */
-enum { K_PLAIN, K_MOVE, K_WRAP, K_ESCAPE, K_CUT, K_MARKS };
+ * K_CUT: base without [c, d). K_BACK (move-closer back): the same cut, then the rest of the
+ * hidden run after it, [d, n), moves in front of the whitespace before c.
+ * K_MARKS: the restyle marker put in (or dropped) at spots c and d. */
+enum { K_PLAIN, K_MOVE, K_WRAP, K_ESCAPE, K_CUT, K_BACK, K_MARKS };
 
 /* K_MARKS flags: drop the marker that ends at c / starts at d instead of putting one in. */
 enum { M_DROP_C = 1, M_DROP_D = 2 };
@@ -400,6 +414,14 @@ static int cand_build(Edit *x, const Cand *cd) {
         pc[np++] = (Piece){ b, c };
         pc[np++] = (Piece){ b + d, len - d };
         raw = c;
+    } else if (cd->kind == K_BACK) {
+        /* b[0:k] + b[d:n] + b[k:c] + b[n:], where b[k:c] is whitespace; the cursor goes after it */
+        int k = ws_start(x, c);
+        pc[np++] = (Piece){ b, k };
+        pc[np++] = (Piece){ b + d, x->n - d };
+        pc[np++] = (Piece){ b + k, c - k };
+        pc[np++] = (Piece){ b + x->n, len - x->n };
+        raw = c + x->n - d;
     } else if (cd->kind == K_MARKS) {
         /* b[0:c] + MK + b[c:d] + MK + b[d:], without the marker ending at c / starting at d if dropped */
         int m = x->mlen, dc = cd->f & M_DROP_C, dd = cd->f & M_DROP_D, e = dd ? d + m : d;
@@ -473,8 +495,9 @@ static int insert_checks(Edit *x, const Cand *cd, int raw) {
     return f;
 }
 
-/* Delete and join checks on the parsed candidate: exact (tier A), whitespace anywhere may have
- * any style (tier B), and for the plain cut whether it only adds formatting. */
+/* Delete and join checks on the parsed candidate (a cut or a move-closer back): exact (tier A),
+ * whitespace anywhere may have any style (tier B), and for the plain cut whether it only adds
+ * formatting. */
 static int cut_checks(Edit *x, const Cand *cd) {
     Check ck = {0};
     int f = 0;
@@ -495,7 +518,7 @@ static int cand_eval(Edit *x, Cand *cd) {
     int raw = cand_build(x, cd);
     para_parse(&x->cur, x->o->s, x->o->len, x->in_code);
     cd->cursor = fv_snap(x->cur.s, x->cur.len, &x->cur.ps, x->cur.hid, raw);
-    if (cd->kind == K_CUT) return cut_checks(x, cd);
+    if (cd->kind == K_CUT || cd->kind == K_BACK) return cut_checks(x, cd);
     if (cd->kind == K_MARKS) {
         render_of(&x->cur, &x->got);
         return render_match(&x->exp, &x->got, &x->ck) ? P_A : 0;
@@ -540,21 +563,33 @@ static int try_inserts(Edit *x, const char *base, Tally *tl) {
     return 0;
 }
 
+/* Can a move-closer-back candidate cut [c, d)? Only whitespace may be left between the run's
+ * content and the rest of the hidden run after the cut, and something of that run must be left
+ * to move. */
+static int back_ok(const Edit *x, int c, int d) {
+    int k = ws_start(x, c);
+    return k < c && d < x->n && spot_ok(x, k, -1) && spot_ok(x, x->n, -1);
+}
+
 /* Delete candidates built from base: cut [a - t, b + u) for t over the hidden run before a and
  * u over the hidden run after b, by t + u ascending. For an emptied run (the character is the
  * only visible byte between two hidden runs) by t + u descending, so its whole pair goes.
- * Returns 1 when one passes tier A. */
+ * Then the move-closer-back candidates for the same cuts, in the same order: the rest of the
+ * hidden run moves in front of the whitespace before the cut (its pass usually comes from tier
+ * B, as that whitespace loses the style). Returns 1 when one passes tier A. */
 static int try_cuts(Edit *x, const char *base, Tally *tl) {
+    static const int KINDS[] = { K_CUT, K_BACK };
     int np = x->a - x->p, nn = x->n - x->b, max = np + nn, emptied = np > 0 && nn > 0;
-    for (int i = 0; i <= max; i++) {
-        int sum = emptied ? max - i : i;
-        for (int t = 0; t <= np; t++) {
-            int u = sum - t;
-            if (u < 0 || u > nn || !spot_ok(x, x->a - t, x->a) || !spot_ok(x, x->b + u, x->b)) continue;
-            if (consider(x, (Cand){ .kind = K_CUT, .c = x->a - t, .d = x->b + u, .base = base }, tl))
-                return 1;
+    for (int kd = 0; kd < 2; kd++)
+        for (int i = 0; i <= max; i++) {
+            int sum = emptied ? max - i : i;
+            for (int t = 0; t <= np; t++) {
+                int u = sum - t, c = x->a - t, d = x->b + u;
+                if (u < 0 || u > nn || !spot_ok(x, c, x->a) || !spot_ok(x, d, x->b)) continue;
+                if (KINDS[kd] == K_BACK && !back_ok(x, c, d)) continue;
+                if (consider(x, (Cand){ .kind = KINDS[kd], .c = c, .d = d, .base = base }, tl)) return 1;
+            }
         }
-    }
     return 0;
 }
 
@@ -617,8 +652,7 @@ void fe_insert(const char *s, int len, int in_code, int off, const char *t, int 
     x.off = fv_snap(s, len, &x.old.ps, x.old.hid, off);
     /* The hidden run at the cursor, and the whitespace and hidden run left of it. */
     for (x.h = x.off; x.h < len && x.old.hid[x.h]; x.h++) {}
-    x.k = x.off;
-    while (x.k > x.old.start && is_space(s[x.k - 1]) && !x.old.hid[x.k - 1]) x.k--;
+    x.k = ws_start(&x, x.off);
     x.j = x.k;
     if (x.k < x.off)
         while (x.j > x.old.start && x.old.hid[x.j - 1]) x.j--;
@@ -695,91 +729,154 @@ static int link_end(const Edit *x, int off) {
     return off;
 }
 
-/* Split candidates at each spot c = off..h: left = s[0:c] + closers, right = openers + s[c:],
- * where the openers are y[0..ny) and the closers are y reversed byte by byte (each marker is one
- * repeated character, so they nest). Returns 1 when both halves render as expected (o then
- * holds them). */
-static int split_at(Edit *x, int off, int h, const char *y, char *cl, int ny) {
+/* A split being tried: its spots, the styles that span it and the opener/closer buffers. */
+typedef struct {
+    int off, h;     /* candidate spots c = off..h */
+    int B;          /* inline styles spanning the split */
+    int ws;         /* whitespace shape: closers before the left half's trailing whitespace,
+                       openers after the right half's leading whitespace */
+    char *y, *cl;   /* openers and closers, len + 1 bytes each */
+} Split;
+
+/* Split candidates at each spot c = off..h with openers y[0..ny): left = s[0:c] + closers,
+ * right = openers + s[c:]. The closers are y reversed byte by byte (each marker is one repeated
+ * character, so they nest). In the whitespace shape the closers go before the left half's
+ * trailing whitespace and the openers after the right half's leading whitespace; that
+ * whitespace may lose the spanning styles. Returns 1 when both halves render as expected (o
+ * then holds them). */
+static int split_at(Edit *x, const Split *sp, int ny) {
     FeOut *o = x->o;
-    Check ck = {0};
-    for (int i = 0; i < ny; i++) cl[i] = y[ny - 1 - i];
-    for (int c = off; c <= h; c++) {
-        Piece left[2] = { { x->s, c }, { cl, ny } }, right[2] = { { y, ny }, { x->s + c, x->len - c } };
-        if (!spot_ok(x, c, off)) continue;
-        put_pieces(&o->s, &o->cap, &o->len, left, 2);
+    for (int i = 0; i < ny; i++) sp->cl[i] = sp->y[ny - 1 - i];
+    for (int c = sp->off; c <= sp->h; c++) {
+        int lw = sp->ws ? ws_start(x, c) : c, rw = sp->ws ? ws_end(x, c) : c;
+        /* left = s[0:lw] + closers + s[lw:c], right = s[c:rw] + openers + s[rw:] */
+        Piece left[3] = { { x->s, lw }, { sp->cl, ny }, { x->s + lw, c - lw } };
+        Piece right[3] = { { x->s + c, rw - c }, { sp->y, ny }, { x->s + rw, x->len - rw } };
+        Check ckl = { .flex_at = x->exp.n - (c - lw), .flex_len = c - lw, .lose_bits = sp->B };
+        Check ckr = { .flex_len = rw - c, .lose_bits = sp->B };
+        if (!spot_ok(x, c, sp->off) || (sp->ws && lw == c && rw == c)) continue;
+        put_pieces(&o->s, &o->cap, &o->len, left, 3);
         para_parse(&x->cur, o->s, o->len, x->in_code);
         render_of(&x->cur, &x->got);
-        if (!render_match(&x->exp, &x->got, &ck)) continue;
-        put_pieces(&o->s2, &o->cap2, &o->len2, right, 2);
+        if (!render_match(&x->exp, &x->got, &ckl)) continue;
+        put_pieces(&o->s2, &o->cap2, &o->len2, right, 3);
         para_parse(&x->cur, o->s2, o->len2, x->in_code);
         render_of(&x->cur, &x->got);
-        if (render_match(&x->exp2, &x->got, &ck)) return 1;
+        if (render_match(&x->exp2, &x->got, &ckr)) return 1;
     }
     return 0;
 }
 
-/* Most marker-suffix combinations tried for a split. */
-#define SPLIT_TRIES 32
+/* Most trim options kept per run end. */
+#define MAXOPT 8
 
-/* Split candidates for the styles B that span off. Each bit's opener is the hidden run before
- * the start of its run; the runs, left to right without duplicates, make the openers. If they
- * fail, each run is trimmed to its suffixes (inner markers sit at the end of an opener run);
- * only suffixes made of marker characters can close properly. Returns 1 when one passes. */
-static int split_spanning(Edit *x, int off, int h, int B, char *y, char *cl) {
+/* The opener runs of the spanning styles, left to right, and the ways each may be trimmed:
+ * options [0, nsuf) are its marker-only suffixes, [nsuf, nopt) its marker-only prefixes, longest
+ * first. Only marker characters close properly when reversed. */
+typedef struct {
+    int nr, rs[NMARKS], re[NMARKS];
+    int nsuf[NMARKS], nopt[NMARKS], at[NMARKS][2 * MAXOPT], len[NMARKS][2 * MAXOPT];
+} Runs;
+
+/* Finds each spanning style's opener run: the hidden run before the start of the style's run
+ * (walking left from off over visible bytes with it). Runs are kept left to right without
+ * duplicates. */
+static void split_runs(const Edit *x, const Split *sp, Runs *r) {
     const unsigned char *st = x->old.ps.style, *hid = x->old.hid;
-    int rs[NMARKS], re[NMARKS], tail[NMARKS], L[NMARKS], nr = 0, ny = 0, tries = 0, q;
+    int q, L;
+    r->nr = 0;
     for (int m = 0; m < NMARKS; m++) {
         int bit = MARKS[m].bit, first = -1, r0;
-        if (!(B & bit)) continue;
-        /* Walk left from off over visible bytes with the bit, skipping hidden ones. */
-        for (int i = off - 1; i >= x->old.start; i--) {
+        if (!(sp->B & bit)) continue;
+        for (int i = sp->off - 1; i >= x->old.start; i--) {
             if (hid[i]) continue;
             if (!(st[i] & bit)) break;
             first = i;
         }
         if (first < 0 || (r0 = run_start(x, first)) == first) continue;
-        for (q = nr; q > 0 && rs[q - 1] > r0; q--) {}
-        if (q > 0 && rs[q - 1] == r0) continue;
-        memmove(rs + q + 1, rs + q, (nr - q) * sizeof *rs);
-        memmove(re + q + 1, re + q, (nr - q) * sizeof *re);
-        rs[q] = r0;
-        re[q] = first;
-        nr++;
+        for (q = r->nr; q > 0 && r->rs[q - 1] > r0; q--) {}
+        if (q > 0 && r->rs[q - 1] == r0) continue;
+        memmove(r->rs + q + 1, r->rs + q, (r->nr - q) * sizeof *r->rs);
+        memmove(r->re + q + 1, r->re + q, (r->nr - q) * sizeof *r->re);
+        r->rs[q] = r0;
+        r->re[q] = first;
+        r->nr++;
     }
-    for (q = 0; q < nr; q++) {
-        memcpy(y + ny, x->s + rs[q], re[q] - rs[q]);
-        ny += re[q] - rs[q];
+    for (q = 0; q < r->nr; q++) {
+        int rs = r->rs[q], re = r->re[q], n = 0;
+        for (L = 0; re - L > rs && is_marker(x->s[re - L - 1]); L++) {}
+        for (; L > 0 && n < MAXOPT; L--) {
+            r->at[q][n] = re - L;
+            r->len[q][n++] = L;
+        }
+        r->nsuf[q] = n;
+        /* Prefixes, skipping any with the same bytes as an earlier option. */
+        for (L = 0; rs + L < re && is_marker(x->s[rs + L]); L++) {}
+        for (; L > 0 && n < 2 * MAXOPT; L--) {
+            int dup = 0;
+            for (int k = 0; k < n; k++)
+                dup |= r->len[q][k] == L && !memcmp(x->s + r->at[q][k], x->s + rs, L);
+            if (dup) continue;
+            r->at[q][n] = rs;
+            r->len[q][n++] = L;
+        }
+        r->nopt[q] = n;
     }
-    if (split_at(x, off, h, y, cl, ny)) return 1;
+}
 
-    /* Each run trimmed to its marker suffixes: lengths tail..1, the last run shrinking first. */
-    for (q = 0; q < nr; q++) {
-        for (tail[q] = 0; re[q] - tail[q] > rs[q] && is_marker(x->s[re[q] - tail[q] - 1]); tail[q]++) {}
-        if (!tail[q]) return 0;
-        L[q] = tail[q];
-    }
-    while (nr) {
-        int full = 1;
-        for (q = 0; q < nr; q++) full &= L[q] == re[q] - rs[q];
-        if (!full) {
-            ny = 0;
-            for (q = 0; q < nr; q++) {
-                memcpy(y + ny, x->s + re[q] - L[q], L[q]);
-                ny += L[q];
+/* Most opener combinations tried per phase of a split. */
+#define SPLIT_TRIES 32
+
+/* Split candidates with each run trimmed to one of its options, the last run changing fastest.
+ * Phase 1 uses only the suffixes; phase 2 also the prefixes, skipping what phase 1 tried. The
+ * untrimmed runs are never repeated. Returns 1 when one passes. */
+static int split_trimmed(Edit *x, const Split *sp, const Runs *r, int phase) {
+    int pick[NMARKS] = {0}, lim[NMARKS], tries = 0, q;
+    if (!r->nr) return 0;
+    for (q = 0; q < r->nr; q++)
+        if (!(lim[q] = phase == 1 ? r->nsuf[q] : r->nopt[q])) return 0;
+    for (;;) {
+        int full = 1, suf = 1, ny = 0;
+        for (q = 0; q < r->nr; q++) {
+            full &= r->len[q][pick[q]] == r->re[q] - r->rs[q];
+            suf &= pick[q] < r->nsuf[q];
+        }
+        if (!full && (phase == 1 || !suf)) {
+            for (q = 0; q < r->nr; q++) {
+                memcpy(sp->y + ny, x->s + r->at[q][pick[q]], r->len[q][pick[q]]);
+                ny += r->len[q][pick[q]];
             }
-            if (split_at(x, off, h, y, cl, ny)) return 1;
+            if (split_at(x, sp, ny)) return 1;
             if (++tries == SPLIT_TRIES) return 0;
         }
-        for (q = nr - 1; q >= 0 && L[q] == 1; q--) L[q] = tail[q];
+        for (q = r->nr - 1; q >= 0 && pick[q] == lim[q] - 1; q--) pick[q] = 0;
         if (q < 0) return 0;
-        L[q]--;
+        pick[q]++;
+    }
+}
+
+/* Split candidates for the styles that span the split. The openers are their opener runs; if
+ * those fail, each run is trimmed to a marker-only suffix (inner markers sit at the end of an
+ * opener run), then also to a marker-only prefix (a link's '[' can follow the markers). All of
+ * that in the plain shape first, then in the whitespace shape. Returns 1 when one passes. */
+static int split_spanning(Edit *x, Split *sp) {
+    Runs r;
+    split_runs(x, sp, &r);
+    for (sp->ws = 0; sp->ws <= 1; sp->ws++) {
+        int ny = 0;
+        for (int q = 0; q < r.nr; q++) {
+            memcpy(sp->y + ny, x->s + r.rs[q], r.re[q] - r.rs[q]);
+            ny += r.re[q] - r.rs[q];
+        }
+        if (split_at(x, sp, ny) || split_trimmed(x, sp, &r, 1) || split_trimmed(x, sp, &r, 2)) return 1;
     }
     return 0;
 }
 
 void fe_split(const char *s, int len, int in_code, int off, FeOut *o) {
     Edit x;
-    int l, r, v, h, B;
+    Split sp = {0};
+    int l, r, v;
     edit_open(&x, s, len, in_code, o);
     const unsigned char *st = x.old.ps.style, *hid = x.old.hid;
     off = fv_snap(s, len, &x.old.ps, hid, off);
@@ -791,9 +888,10 @@ void fe_split(const char *s, int len, int in_code, int off, FeOut *o) {
         off = link_end(&x, off);
         r = vis_from(&x, off);
     }
+    sp.off = off;
+    sp.h = run_end(&x, off);
     /* The styles that span the split: on the visible bytes left and right of it. */
-    B = fv_style_left(s, len, &x.old.ps, hid, off) & (r < len ? st[r] : 0);
-    h = run_end(&x, off);
+    sp.B = fv_style_left(s, len, &x.old.ps, hid, off) & (r < len ? st[r] : 0);
 
     /* Expected: the old render before the split, with the old block type (left), and after it
      * as a paragraph of its own (right). */
@@ -801,16 +899,17 @@ void fe_split(const char *s, int len, int in_code, int off, FeOut *o) {
     render_slice(&x.exp, v, x.exp.n - v, in_code ? BLK_CODE : BLK_NORMAL, &x.exp2);
     x.exp.n = v;
 
-    char *y = malloc(len + 1), *cl = malloc(len + 1);
-    if (!(B ? split_spanning(&x, off, h, B, y, cl) : split_at(&x, off, h, "", cl, 0))) {
+    sp.y = malloc(len + 1);
+    sp.cl = malloc(len + 1);
+    if (!(sp.B ? split_spanning(&x, &sp) : split_at(&x, &sp, 0))) {
         /* Fallback: the plain split at off. */
         Piece left = { s, off }, right = { s + off, len - off };
         put_pieces(&o->s, &o->cap, &o->len, &left, 1);
         put_pieces(&o->s2, &o->cap2, &o->len2, &right, 1);
     }
     o->cursor = 0;
-    free(y);
-    free(cl);
+    free(sp.y);
+    free(sp.cl);
     edit_close(&x);
 }
 
@@ -875,16 +974,16 @@ void fe_join(const char *a, int alen, const char *b, int blen, FeOut *o) {
 
 /* ---- Word restyle ---- */
 
-/* Is there a hidden marker MK ending at c (starting at or after lo)? */
-static int mk_ends(const Edit *x, int c, int lo) {
+/* Is there a hidden marker MK in base ending at c (starting at or after lo)? */
+static int mk_ends(const Edit *x, const char *base, int c, int lo) {
     int m = x->mlen;
-    return c - m >= lo && memcmp(x->s + c - m, x->mk, m) == 0 && !memchr(x->old.hid + c - m, 0, m);
+    return c - m >= lo && memcmp(base + c - m, x->mk, m) == 0 && !memchr(x->old.hid + c - m, 0, m);
 }
 
-/* Is there a hidden marker MK starting at c (ending at or before hi)? */
-static int mk_starts(const Edit *x, int c, int hi) {
+/* Is there a hidden marker MK in base starting at c (ending at or before hi)? */
+static int mk_starts(const Edit *x, const char *base, int c, int hi) {
     int m = x->mlen;
-    return c + m <= hi && memcmp(x->s + c, x->mk, m) == 0 && !memchr(x->old.hid + c, 0, m);
+    return c + m <= hi && memcmp(base + c, x->mk, m) == 0 && !memchr(x->old.hid + c, 0, m);
 }
 
 /* Add: MK + word + MK, the start anywhere in the hidden run before a and the end anywhere in
@@ -900,25 +999,23 @@ static int restyle_add(Edit *x, Tally *tl) {
     return 0;
 }
 
-/* Remove. R1: drop an MK that ends the hidden run before a and one that starts the hidden run
- * after b. R2: close the run before the word and reopen it after, with MK at the edges of the
- * whitespace around the word (an MK already there, the run's own opener or closer, is dropped
- * instead). That whitespace may lose the bit. */
-static int restyle_remove(Edit *x, int bit, Tally *tl) {
-    int a = x->a, b = x->b, aw = a, bw = b, r1, f;
-    while (aw > x->old.start && is_space(x->s[aw - 1]) && !x->old.hid[aw - 1]) aw--;
-    while (bw < x->len && is_space(x->s[bw]) && !x->old.hid[bw]) bw++;
+/* Remove, on base (s, or the '_'→'*' text). R1: drop an MK that ends the hidden run before a
+ * and one that starts the hidden run after b. R2: close the run before the word and reopen it
+ * after, with MK at the edges of the whitespace around the word (an MK already there, the run's
+ * own opener or closer, is dropped instead). That whitespace may lose the bit. */
+static int restyle_remove(Edit *x, int bit, const char *base, Tally *tl) {
+    int a = x->a, b = x->b, aw = ws_start(x, a), bw = ws_end(x, b), r1, f;
     x->ck.flex_at = render_index(&x->old, aw);
     x->ck.flex_len = render_index(&x->old, bw) - x->ck.flex_at;
     x->ck.lose_bits = bit;
 
-    r1 = mk_ends(x, a, run_start(x, a)) && mk_starts(x, b, run_end(x, b));
-    if (r1 && consider(x, (Cand){ .kind = K_MARKS, .c = a, .d = b, .f = M_DROP_C | M_DROP_D, .base = x->s }, tl))
+    r1 = mk_ends(x, base, a, run_start(x, a)) && mk_starts(x, base, b, run_end(x, b));
+    if (r1 && consider(x, (Cand){ .kind = K_MARKS, .c = a, .d = b, .f = M_DROP_C | M_DROP_D, .base = base }, tl))
         return 1;
 
-    f = (mk_ends(x, aw, x->old.start) ? M_DROP_C : 0) | (mk_starts(x, bw, x->len) ? M_DROP_D : 0);
+    f = (mk_ends(x, base, aw, x->old.start) ? M_DROP_C : 0) | (mk_starts(x, base, bw, x->len) ? M_DROP_D : 0);
     if (r1 && aw == a && bw == b && f == (M_DROP_C | M_DROP_D)) return 0;   /* the same as R1 */
-    return consider(x, (Cand){ .kind = K_MARKS, .c = aw, .d = bw, .f = f, .base = x->s }, tl);
+    return consider(x, (Cand){ .kind = K_MARKS, .c = aw, .d = bw, .f = f, .base = base }, tl);
 }
 
 int fe_restyle(const char *s, int len, int in_code, int a, int b, int bit, FeOut *o) {
@@ -943,7 +1040,10 @@ int fe_restyle(const char *s, int len, int in_code, int a, int b, int bit, FeOut
     for (int i = va; i < vb; i++) has &= (x.exp.st[i] & bit) != 0;
     for (int i = va; i < vb; i++) x.exp.st[i] = (unsigned char)(has ? x.exp.st[i] & ~bit : x.exp.st[i] | bit);
 
-    ok = vb > va && (has ? restyle_remove(&x, bit, &tl) : restyle_add(&x, &tl));
+    if (vb == va) ok = 0;
+    else if (!has) ok = restyle_add(&x, &tl);
+    /* Remove: R1 and R2, then (last tier) both again on the text with '_' markers as '*'. */
+    else ok = restyle_remove(&x, bit, s, &tl) || (underscore_text(&x) && restyle_remove(&x, bit, x.us, &tl));
     edit_close(&x);
     if (!ok) {
         free(tmp.s);
